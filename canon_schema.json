@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Churikov0112/transfermarkt_scrapper/canon_schema.json",
+  "title": "Transfermarkt canon JSON",
+  "description": "Canonical JSON on TM-id produced by build_canon.py. Schema per GameplayFootball wiki (данные-из-transfermarkt). weight is derived by the converters, not present in Transfermarkt data.",
+  "definitions": {
+    "competition": {
+      "type": "object",
+      "required": ["id", "name", "type", "country", "tier", "logo"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": ["string", "null"] },
+        "country": {
+          "type": "object",
+          "required": ["id", "name"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "name": { "type": ["string", "null"] }
+          }
+        },
+        "tier": { "type": ["integer", "null"] },
+        "logo": { "type": ["string", "null"] }
+      }
+    },
+    "club": {
+      "type": "object",
+      "required": ["id", "name", "colors", "stadium", "league_id", "logo", "founded_on"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "colors": { "type": "array", "items": { "type": "string" } },
+        "stadium": {
+          "type": "object",
+          "required": ["name", "seats"],
+          "properties": {
+            "name": { "type": ["string", "null"] },
+            "seats": { "type": ["integer", "null"] }
+          }
+        },
+        "league_id": { "type": ["string", "null"] },
+        "logo": { "type": ["string", "null"] },
+        "founded_on": { "type": ["string", "null"] }
+      }
+    },
+    "national_team": {
+      "type": "object",
+      "required": ["id", "name", "coach_id", "flag", "emblem"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "coach_id": { "type": ["string", "null"] },
+        "flag": { "type": ["string", "null"] },
+        "emblem": { "type": ["string", "null"] }
+      }
+    },
+    "player": {
+      "type": "object",
+      "required": [
+        "id", "name", "first_name", "last_name", "birth_date", "height",
+        "foot", "citizenship", "position", "club_id", "national_team_id",
+        "shirt_number", "market_value", "max_market_value", "outfitter", "is_retired"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "first_name": { "type": ["string", "null"] },
+        "last_name": { "type": ["string", "null"] },
+        "birth_date": { "type": ["string", "null"] },
+        "height": { "type": ["integer", "null"] },
+        "foot": { "type": ["string", "null"] },
+        "citizenship": { "type": "array", "items": { "type": ["string", "null"] } },
+        "position": {
+          "type": "object",
+          "required": ["main", "other"],
+          "properties": {
+            "main": { "type": ["string", "null"] },
+            "other": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "club_id": { "type": ["string", "null"] },
+        "national_team_id": { "type": ["string", "null"] },
+        "shirt_number": { "type": ["string", "null"] },
+        "market_value": { "type": ["integer", "null"] },
+        "max_market_value": { "type": ["integer", "null"] },
+        "outfitter": { "type": ["string", "null"] },
+        "is_retired": { "type": "boolean" }
+      }
+    },
+    "market_value_entry": {
+      "type": "object",
+      "required": ["id", "history"],
+      "properties": {
+        "id": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["age", "date", "clubId", "clubName", "marketValue"],
+            "properties": {
+              "age": { "type": ["integer", "null"] },
+              "date": { "type": ["string", "null"] },
+              "clubId": { "type": ["string", "null"] },
+              "clubName": { "type": ["string", "null"] },
+              "marketValue": { "type": ["integer", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "coach": {
+      "type": "object",
+      "required": ["id", "name", "citizenship", "current_club_id"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "citizenship": { "type": ["string", "null"] },
+        "current_club_id": { "type": ["string", "null"] }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["version", "snapshot_date", "tm_season", "counts"],
+      "properties": {
+        "version": { "type": "string" },
+        "snapshot_date": { "type": "string" },
+        "tm_season": { "type": ["string", "null"] },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "competitions": { "type": "integer" },
+            "clubs": { "type": "integer" },
+            "national_teams": { "type": "integer" },
+            "players": { "type": "integer" },
+            "coaches": { "type": "integer" }
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "meta": { "$ref": "#/definitions/meta" },
+    "competitions": { "type": "array", "items": { "$ref": "#/definitions/competition" } },
+    "clubs": { "type": "array", "items": { "$ref": "#/definitions/club" } },
+    "national_teams": { "type": "array", "items": { "$ref": "#/definitions/national_team" } },
+    "players": { "type": "array", "items": { "$ref": "#/definitions/player" } },
+    "players_market_value": { "type": "array", "items": { "$ref": "#/definitions/market_value_entry" } },
+    "coaches": { "type": "array", "items": { "$ref": "#/definitions/coach" } }
+  }
+}
