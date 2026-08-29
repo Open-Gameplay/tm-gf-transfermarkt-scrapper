@@ -111,12 +111,18 @@ class TokenBucket:
 
 
 class CircuitBreaker:
-    """After `threshold` consecutive failures, pause all requests for `pause`s."""
+    """After `threshold` consecutive failures, pause all requests for a while.
+
+    The pause grows exponentially on repeated openings (120s -> 4m -> 8m -> ...
+    up to `pause * 16`) and resets on the first success — so a persistent TM
+    block makes us wait properly instead of hammering every 2 minutes.
+    """
 
     def __init__(self, threshold: int, pause: float):
         self.threshold = max(threshold, 1)
         self.pause = pause
         self.fails = 0
+        self.open_count = 0
         self.opened_until = 0.0
         self.lock = threading.Lock()
 
@@ -132,15 +138,18 @@ class CircuitBreaker:
     def on_success(self) -> None:
         with self.lock:
             self.fails = 0
+            self.open_count = 0
             self.opened_until = 0.0
 
     def on_failure(self) -> None:
         with self.lock:
             self.fails += 1
             if self.fails >= self.threshold:
-                self.opened_until = time.monotonic() + self.pause
-                logger.error("Circuit breaker OPEN for %.1fs (%d consecutive failures)",
-                             self.pause, self.fails)
+                self.open_count += 1
+                wait = min(self.pause * (2 ** (self.open_count - 1)), self.pause * 16)
+                self.opened_until = time.monotonic() + wait
+                logger.error("Circuit breaker OPEN for %.1fs (open #%d, %d consecutive failures)",
+                             wait, self.open_count, self.fails)
 
 
 class AdaptiveSemaphore:

@@ -42,3 +42,30 @@ def test_recovers_after_pause():
     t0 = time.monotonic()
     cb.gate()  # timer already expired
     assert time.monotonic() - t0 < 0.05
+
+
+def test_pause_grows_on_repeated_openings():
+    cb = CircuitBreaker(threshold=1, pause=1.0)
+    cb.on_failure()
+    d1 = cb.opened_until - time.monotonic()
+    cb.opened_until = 0.0  # gate expired
+    cb.on_failure()
+    d2 = cb.opened_until - time.monotonic()
+    assert 0.9 < d1 < 1.1
+    assert 1.9 < d2 < 2.1, "pause should double on a repeated opening"
+    for _ in range(10):
+        cb.opened_until = 0.0
+        cb.on_failure()
+    dlast = cb.opened_until - time.monotonic()
+    assert dlast <= 16.5, "pause growth must be capped at pause*16"
+
+
+def test_success_resets_growth():
+    cb = CircuitBreaker(threshold=1, pause=1.0)
+    cb.on_failure()
+    cb.opened_until = 0.0
+    cb.on_failure()  # grew to 2x
+    cb.on_success()
+    cb.on_failure()
+    d = cb.opened_until - time.monotonic()
+    assert 0.9 < d < 1.1, "a success must reset the pause growth"
