@@ -140,39 +140,40 @@ def test_circuit_breaker_opens_on_repeated_failures(mock_server, tmp_path):
     assert c._circuit.opened_until > 0, "circuit should open"
 
 
-def test_403_streak_halves_rate(mock_server, tmp_path):
-    """A run of 403 blocks must halve the adaptive rate (volume-based block)."""
-    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
-               max_retries=1, circuit_fails=999, cache=False)
-    for i in range(6):
-        mock_server.scenario.append((403, b"blocked", {}))
-    for i in range(6):
-        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
-    assert c._buckets["html"].rps < 8.0, "rate should have been halved after a 403 streak"
-
-
-def test_403_streak_resets_on_success(mock_server, tmp_path):
-    """Scattered honeypots (broken by successes) must NOT halve the rate."""
-    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
-               max_retries=1, circuit_fails=999, cache=False)
-    mock_server.scenario = [
-        (403, b"", {}), (403, b"", {}), (200, b"ok", {}),
-        (403, b"", {}), (403, b"", {}), (403, b"", {}), (403, b"", {}),
-    ]
-    for i in range(7):
-        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
-    assert c._buckets["html"].rps == 8.0, "scattered 403s must not throttle"
-
-
-def test_403_streak_does_not_open_circuit(mock_server, tmp_path):
-    """403 clusters halve the rate but must NOT trigger the global circuit
-    pause (that is reserved for 5xx/timeouts — 403s are handled by the rate
-    aimer + retry queue)."""
+def test_sustained_403_halves_rate_and_opens_circuit(mock_server, tmp_path):
+    """Near-100% 403 over the window = sustained block -> halve rate AND open the circuit."""
     c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
                max_retries=1, circuit_fails=2, circuit_pause=0.1, cache=False)
-    for i in range(6):
+    for i in range(12):
         mock_server.scenario.append((403, b"blocked", {}))
-    for i in range(6):
+    for i in range(12):
         c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
-    assert c._buckets["html"].rps < 8.0, "rate halves on a 403 streak"
-    assert c._circuit.opened_until == 0, "circuit must NOT open on 403s"
+    assert c._buckets["html"].rps < 8.0, "rate should be halved"
+    assert c._circuit.opened_until > 0, "sustained block should open the circuit"
+
+
+def test_clustered_403_halves_rate_without_circuit(mock_server, tmp_path):
+    """~50% 403 = clustered blocks -> halve the rate but do NOT open the circuit."""
+    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
+               max_retries=1, circuit_fails=2, circuit_pause=0.1, cache=False)
+    for i in range(10):
+        mock_server.scenario += [(200, b"ok", {}), (403, b"blocked", {})]
+    for i in range(20):
+        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
+    assert c._buckets["html"].rps < 8.0, "clustered blocks should halve the rate"
+    assert c._circuit.opened_until == 0, "circuit must NOT open on ~50% blocks"
+
+
+def test_scattered_403_do_not_throttle(mock_server, tmp_path):
+    """Low 403 ratio (scattered honeypots) -> no throttling at all."""
+    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
+               max_retries=1, circuit_fails=2, circuit_pause=0.1, cache=False)
+    # 3 blocks in 20 requests (ratio 0.15 < mid) — honeypots
+    pattern = [200, 200, 403, 200, 200, 200, 200, 403, 200, 200,
+               200, 200, 200, 200, 200, 200, 200, 200, 403, 200]
+    for code in pattern:
+        mock_server.scenario.append((code, b"x", {}))
+    for i in range(20):
+        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
+    assert c._buckets["html"].rps == 8.0, "scattered honeypots must not throttle"
+    assert c._circuit.opened_until == 0

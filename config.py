@@ -41,10 +41,14 @@ CONCURRENCY = int(os.getenv("TM_CONCURRENCY", "2"))  # max in-flight requests
 CIRCUIT_FAILS = int(os.getenv("TM_CIRCUIT_FAILS", "3"))
 CIRCUIT_PAUSE = float(os.getenv("TM_CIRCUIT_PAUSE", "120"))
 
-# Number of consecutive 403-block responses that count as a TM throttle signal
-# (triggers the adaptive rate to halve). Scattered honeypots are rare; a real
-# volume-based block produces long runs of 403s.
-BLOCK_STREAK = int(os.getenv("TM_BLOCK_STREAK", "5"))
+# Block detection (403 responses): the client tracks the recent 403 ratio per
+# bucket over a sliding window and reacts by severity:
+#   ratio >= BLOCK_RATIO_HIGH  -> sustained block: open the circuit (stop hammering)
+#   BLOCK_RATIO_MID <= ratio < BLOCK_RATIO_HIGH -> clustered blocks: halve the rate
+#   below -> scattered honeypots: do nothing special
+BLOCK_WINDOW = int(os.getenv("TM_BLOCK_WINDOW", "20"))
+BLOCK_RATIO_HIGH = float(os.getenv("TM_BLOCK_RATIO_HIGH", "0.7"))
+BLOCK_RATIO_MID = float(os.getenv("TM_BLOCK_RATIO_MID", "0.4"))
 
 # Retry queue for per-player fetches (profiles / market values): failed players
 # are re-tried in later rounds after a cooldown, so no player is skipped just

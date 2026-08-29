@@ -20,6 +20,7 @@ import logging
 import random
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,9 @@ import requests
 from cache import ResumeCache
 from config import (
     API_BASE,
-    BLOCK_STREAK,
+    BLOCK_RATIO_HIGH,
+    BLOCK_RATIO_MID,
+    BLOCK_WINDOW,
     CACHE_ENABLED,
     CACHE_PATH,
     CACHE_TTL,
@@ -315,7 +318,7 @@ class Client:
         # AIMD concurrency: starts at `concurrency`, grows to `concurrency*2` on
         # success, halves on throttle. Token bucket still caps the global rate.
         self._sem = AdaptiveSemaphore(concurrency, 1, max(concurrency * 2, 4), ai_after_ok=50)
-        self._block_streak: dict[str, int] = {}
+        self._outcomes: dict[str, deque] = {}
         self._lock = threading.Lock()
 
         # AIMD on the rate: each bucket gets a RateAimer that halves the rps on
@@ -491,21 +494,32 @@ class Client:
             self._buckets[bucket].set_rate(aimer.rate)
 
     def _note_block(self, bucket: str) -> None:
-        """Count a 403 block; a long streak halves the adaptive rate.
+        """React to a 403 block by its recent ratio (sliding window).
 
-        403 clusters are TM volume-blocking a handful of pages — the right
-        response is a slower rate + the retry queue, NOT a global circuit pause
-        (that is reserved for 5xx/timeouts/connection failures). Scattered
-        honeypots produce isolated 403s; a real sustained block produces a long
-        run, so a streak >= BLOCK_STREAK triggers the adaptive rate.
+        - high ratio (>= BLOCK_RATIO_HIGH): sustained block -> open the circuit
+          (stop hammering; the circuit pause lets TM's window reset);
+        - mid ratio: clustered blocks -> halve the rate, keep going (the retry
+          queue catches the blocked players);
+        - low ratio: scattered honeypots -> do nothing special.
         """
         with self._lock:
-            streak = self._block_streak.get(bucket, 0) + 1
-            self._block_streak[bucket] = streak
-        if streak >= BLOCK_STREAK:
-            with self._lock:
-                self._block_streak[bucket] = 0
-            logger.warning("403 block streak %d on %s -> halving rate", streak, bucket)
+            dq = self._outcomes.setdefault(bucket, deque(maxlen=BLOCK_WINDOW))
+            dq.append(False)
+            ratio = dq.count(False) / max(len(dq), 1)
+        # only act once the window has enough samples for the ratio to be meaningful
+        if len(dq) < max(5, BLOCK_WINDOW // 2):
+            return
+        if ratio >= BLOCK_RATIO_HIGH:
+            logger.warning("sustained block (403 ratio %.0f%%) on %s -> opening circuit",
+                           ratio * 100, bucket)
+            self._circuit.on_failure()
+            self._sem.on_throttle()
+            aimer = self._aimers.get(bucket)
+            if aimer and aimer.on_throttle():
+                self._buckets[bucket].set_rate(aimer.rate)
+        elif ratio >= BLOCK_RATIO_MID:
+            logger.warning("block ratio %.0f%% on %s -> halving rate",
+                           ratio * 100, bucket)
             self._sem.on_throttle()
             aimer = self._aimers.get(bucket)
             if aimer and aimer.on_throttle():
@@ -516,7 +530,8 @@ class Client:
         self._circuit.on_success()
         self._sem.on_success()
         with self._lock:
-            self._block_streak[bucket] = 0
+            dq = self._outcomes.setdefault(bucket, deque(maxlen=BLOCK_WINDOW))
+            dq.append(True)
         aimer = self._aimers.get(bucket)
         if aimer and aimer.on_success():
             self._buckets[bucket].set_rate(aimer.rate)
