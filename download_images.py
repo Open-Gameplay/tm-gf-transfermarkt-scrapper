@@ -28,8 +28,15 @@ def _extension(url: str, default: str = ".png") -> str:
     return ext if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else default
 
 
+def _is_default_image(url: str | None) -> bool:
+    """True for TM placeholder images (players without a real photo)."""
+    return bool(url) and "default" in url.lower()
+
+
 def _download(client: Client, url: str, dest: Path) -> bool:
     if not url:
+        return False
+    if _is_default_image(url):
         return False
     if dest.exists() and dest.stat().st_size > 0:
         return False
