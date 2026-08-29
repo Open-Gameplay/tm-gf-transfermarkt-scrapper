@@ -99,7 +99,9 @@ class TokenBucket:
                     self.tokens -= weight
                     return
                 wait = (weight - self.tokens) / self.rps
-            time.sleep(wait)
+            # jitter: irregular spacing looks human; the bucket self-corrects the
+            # long-run average because tokens accumulate from the real elapsed time
+            time.sleep(wait * (0.6 + 0.8 * random.random()))
 
     def set_rate(self, rps: float) -> None:
         """Change the refill rate at runtime (used by the adaptive rate aimer)."""

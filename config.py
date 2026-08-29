@@ -104,6 +104,19 @@ TIER_1_NATIONAL_TEAMS: list[str] = [
 PILOT_CLUB_IDS: list[str] = ["583", "418"]  # PSG, Real Madrid
 PILOT_NATIONAL_TEAM_IDS: list[str] = ["3377"]  # France
 
+# Smoke scope: England + Spain (2 leagues each) + 10 national teams — fast
+# end-to-end validation before the full Tier-1 crawl.
+SMOKE_COMPETITIONS: list[str] = [
+    "Premier League",
+    "Championship",
+    "LaLiga",
+    "LaLiga2",
+]
+SMOKE_NATIONAL_TEAMS: list[str] = [
+    "England", "France", "Spain", "Portugal", "Germany",
+    "Brazil", "Argentina", "Netherlands", "Belgium", "Norway",
+]
+
 # --- User-Agent pool & default headers ---------------------------------------
 USER_AGENTS: list[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

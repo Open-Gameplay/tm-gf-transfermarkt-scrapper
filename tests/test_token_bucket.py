@@ -23,7 +23,9 @@ def test_steady_rate():
         b.acquire()
     elapsed = time.monotonic() - t0
     expected = (n - 1) / rps  # first is instant (burst), rest every 1/rps
-    assert abs(elapsed - expected) < 0.15, f"elapsed={elapsed:.2f}s, expected~{expected:.2f}s"
+    # jitter (x0.6..x1.4) makes the timing irregular but keeps the average near
+    # the rate — the bucket self-corrects from the real elapsed time.
+    assert expected * 0.5 < elapsed < expected * 1.6, f"elapsed={elapsed:.2f}s, expected~{expected:.2f}s"
 
 
 def test_thread_safe_under_contention():
@@ -45,8 +47,9 @@ def test_thread_safe_under_contention():
         th.join()
     elapsed = time.monotonic() - t0
     expected_min = (total - 2) / rps  # minus burst
-    assert elapsed >= expected_min - 0.5, f"rps violated under load: {elapsed:.2f}s vs >= {expected_min:.2f}s"
-    assert elapsed < expected_min + 2.0, f"too slow: {elapsed:.2f}s"
+    # jitter widens the spread; the average rate must still hold roughly
+    assert elapsed >= expected_min * 0.55, f"rps violated under load: {elapsed:.2f}s vs >= {expected_min:.2f}s"
+    assert elapsed < expected_min * 1.6 + 2.0, f"too slow: {elapsed:.2f}s"
 
 
 def test_burst_refills_over_time():
@@ -66,7 +69,7 @@ def test_weight_consumes_multiple_tokens():
     b.acquire(weight=3)
     t0 = time.monotonic()
     b.acquire(weight=3)  # only 2 tokens left -> must wait for 1 more (0.1s)
-    assert time.monotonic() - t0 >= 0.09
+    assert time.monotonic() - t0 >= 0.05  # jitter keeps at least ~0.6x of the wait
     b2 = TokenBucket(rps=100, burst=10)
     t0 = time.monotonic()
     b2.acquire(weight=2)

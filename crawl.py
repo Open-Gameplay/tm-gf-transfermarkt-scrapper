@@ -20,6 +20,8 @@ from build_canon import build_canon
 from config import (
     PILOT_CLUB_IDS,
     PILOT_NATIONAL_TEAM_IDS,
+    SMOKE_COMPETITIONS,
+    SMOKE_NATIONAL_TEAMS,
     TIER_1_COMPETITIONS,
     TIER_1_NATIONAL_TEAMS,
 )
@@ -28,11 +30,19 @@ from fetch import clubs, coaches, competitions, market_values as mv_fetch, profi
 logger = logging.getLogger("scraper.crawl")
 
 
+def _scope_competitions(scope: str) -> list[str]:
+    return TIER_1_COMPETITIONS if scope == "tier1" else SMOKE_COMPETITIONS
+
+
+def _scope_teams(scope: str) -> list[str]:
+    return TIER_1_NATIONAL_TEAMS if scope == "tier1" else SMOKE_NATIONAL_TEAMS
+
+
 def resolve_club_ids(scope: str) -> list[str]:
     if scope == "pilot":
         return list(PILOT_CLUB_IDS)
     club_ids: list[str] = []
-    comps = competitions.search_competitions(TIER_1_COMPETITIONS)
+    comps = competitions.search_competitions(_scope_competitions(scope))
     for comp in comps:
         clbs = competitions.competition_clubs(comp["id"])
         club_ids.extend(c["id"] for c in clbs)
@@ -45,10 +55,10 @@ def resolve_team_ids(scope: str) -> list[str]:
         return list(PILOT_NATIONAL_TEAM_IDS)
     from client import client as singleton
     data = singleton.api("national-teams/most-valuable")
-    wanted = {name.strip().lower() for name in TIER_1_NATIONAL_TEAMS}
+    wanted = {name.strip().lower() for name in _scope_teams(scope)}
     # most-valuable returns the same team name several times (men senior, U-21,
     # U-19, women, ...). Dedupe by name — the first occurrence is the senior
-    # men's team (highest market value), which is what Tier-1 wants.
+    # men's team (highest market value), which is what we want.
     team_ids: list[str] = []
     seen: set[str] = set()
     for r in (data.get("results") or []):
@@ -62,7 +72,8 @@ def resolve_team_ids(scope: str) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Crawl Transfermarkt data and build canon JSON.")
-    parser.add_argument("--scope", choices=["pilot", "tier1"], default="pilot")
+    parser.add_argument("--scope", choices=["pilot", "smoke", "tier1"], default="pilot",
+                        help="pilot: PSG+Real+France; smoke: England+Spain, 10 NTs; tier1: full set")
     parser.add_argument("--spot", type=int, default=5,
                         help="number of players to fetch spot profiles/market values for (0 = none)")
     parser.add_argument("--all-profiles", action="store_true",
