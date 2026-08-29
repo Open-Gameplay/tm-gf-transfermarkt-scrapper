@@ -491,14 +491,14 @@ class Client:
             self._buckets[bucket].set_rate(aimer.rate)
 
     def _note_block(self, bucket: str) -> None:
-        """Count a 403 block; consecutive 403s open the circuit, a long streak
-        also halves the rate.
+        """Count a 403 block; a long streak halves the adaptive rate.
 
-        Scattered honeypots produce isolated 403s; a real volume-based TM block
-        produces a long run, so a streak >= BLOCK_STREAK triggers the adaptive
-        rate (like a throttle).
+        403 clusters are TM volume-blocking a handful of pages — the right
+        response is a slower rate + the retry queue, NOT a global circuit pause
+        (that is reserved for 5xx/timeouts/connection failures). Scattered
+        honeypots produce isolated 403s; a real sustained block produces a long
+        run, so a streak >= BLOCK_STREAK triggers the adaptive rate.
         """
-        self._circuit.on_failure()
         with self._lock:
             streak = self._block_streak.get(bucket, 0) + 1
             self._block_streak[bucket] = streak

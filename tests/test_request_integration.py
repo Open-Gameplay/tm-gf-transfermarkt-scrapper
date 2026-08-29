@@ -162,3 +162,17 @@ def test_403_streak_resets_on_success(mock_server, tmp_path):
     for i in range(7):
         c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
     assert c._buckets["html"].rps == 8.0, "scattered 403s must not throttle"
+
+
+def test_403_streak_does_not_open_circuit(mock_server, tmp_path):
+    """403 clusters halve the rate but must NOT trigger the global circuit
+    pause (that is reserved for 5xx/timeouts — 403s are handled by the rate
+    aimer + retry queue)."""
+    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
+               max_retries=1, circuit_fails=2, circuit_pause=0.1, cache=False)
+    for i in range(6):
+        mock_server.scenario.append((403, b"blocked", {}))
+    for i in range(6):
+        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
+    assert c._buckets["html"].rps < 8.0, "rate halves on a 403 streak"
+    assert c._circuit.opened_until == 0, "circuit must NOT open on 403s"
