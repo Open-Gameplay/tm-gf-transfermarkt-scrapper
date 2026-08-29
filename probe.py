@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import random
 import time
 
@@ -34,10 +35,12 @@ from config import API_BASE
 
 logger = logging.getLogger("scraper.probe")
 
-HTML_LEVELS = [0.5, 1.0, 1.5, 2.0, 3.0]
-CDN_LEVELS = [2.0, 5.0, 10.0]
-TOTAL = 20
-COOLDOWN = 60  # seconds between levels
+HTML_LEVELS = [float(x) for x in
+               os.getenv("TM_PROBE_LEVELS", "0.5,1.0,1.5,2.0,3.0").split(",")]
+CDN_LEVELS = [float(x) for x in
+              os.getenv("TM_PROBE_CDN_LEVELS", "2.0,5.0,10.0").split(",")]
+TOTAL = int(os.getenv("TM_PROBE_TOTAL", "20"))
+COOLDOWN = float(os.getenv("TM_PROBE_COOLDOWN", "60"))  # seconds between levels
 
 THROTTLE_STATUSES = {403, 429, 500, 502, 503, 504, 520, 522, 524}
 BLOCK_SIGNATURES = ("cf-chl-", "attention required", "are you a human",

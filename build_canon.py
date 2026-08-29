@@ -311,7 +311,8 @@ def build_canon(
         path = out_dir / f"{key}.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(canon[key], f, ensure_ascii=False, indent=2)
-        logger.info("wrote %s (%d entries)", path.name, len(canon[key]) if isinstance(canon[key], list) else "-")
+        logger.info("wrote %s (%s entries)", path.name,
+                    len(canon[key]) if isinstance(canon[key], list) else "-")
 
     _validate(canon)
     return canon

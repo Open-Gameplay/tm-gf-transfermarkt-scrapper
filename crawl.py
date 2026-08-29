@@ -23,7 +23,7 @@ from config import (
     TIER_1_COMPETITIONS,
     TIER_1_NATIONAL_TEAMS,
 )
-from fetch import clubs, coaches, competitions, market_values, profiles, rosters
+from fetch import clubs, coaches, competitions, market_values as mv_fetch, profiles, rosters
 
 logger = logging.getLogger("scraper.crawl")
 
@@ -65,6 +65,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logger.info("scope=%s spot=%d images=%s", args.scope, args.spot, args.images)
 
+    # Deterministic spot selection: the same scope always picks the same
+    # players, so a rerun serves entirely from the resume cache (idempotent).
+    random.seed(20260829)
+
     club_ids = resolve_club_ids(args.scope)
     team_ids = resolve_team_ids(args.scope)
     logger.info("clubs=%d national_teams=%d", len(club_ids), len(team_ids))
@@ -95,7 +99,7 @@ def main() -> None:
     logger.info("players in scope: %d", len(all_player_ids))
     spot_ids = random.sample(all_player_ids, min(args.spot, len(all_player_ids))) if args.spot else []
     player_profiles = profiles.player_profiles(spot_ids) if spot_ids else {}
-    market_values = market_values.player_market_values(spot_ids) if spot_ids else {}
+    market_values = mv_fetch.player_market_values(spot_ids) if spot_ids else {}
     logger.info("spot profiles=%d market_values=%d", len(player_profiles), len(market_values))
 
     build_canon(

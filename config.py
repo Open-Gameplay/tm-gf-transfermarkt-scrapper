@@ -17,12 +17,14 @@ API_BASE = os.getenv("TM_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 
 # --- Rate limits -------------------------------------------------------------
 # HTML endpoints go through the local API: one API call == one live TM request.
-# Safe values established by probe on 2026-08-29 — see docs/wiki/конвейер.md.
-HTML_RPS = float(os.getenv("TM_HTML_RPS", "0.5"))
+# Established by probe on 2026-08-29 (see docs/wiki/конвейер.md, section «Лимиты»):
+#   clean sustained at 2.0 rps, clean bursts at 3.0 rps -> safe = 1.5 rps.
+HTML_RPS = float(os.getenv("TM_HTML_RPS", "1.5"))
 HTML_BURST = int(os.getenv("TM_HTML_BURST", "2"))
 
-# CDN image hosts (img.a.transfermarkt.technology, ...) — probed separately.
-CDN_RPS = float(os.getenv("TM_CDN_RPS", "2.0"))
+# CDN image hosts (img.a.transfermarkt.technology, ...) — probed separately and
+# NOT throttled like www.transfermarkt.com (clean at 20 rps) -> safe = 10 rps.
+CDN_RPS = float(os.getenv("TM_CDN_RPS", "10.0"))
 CDN_BURST = int(os.getenv("TM_CDN_BURST", "4"))
 
 # --- HTTP --------------------------------------------------------------------

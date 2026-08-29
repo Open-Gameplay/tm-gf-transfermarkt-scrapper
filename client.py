@@ -213,7 +213,7 @@ class Client:
 
         if use_cache and method == "GET" and self._cache:
             hit = self._cache.get(url)
-            if hit and 200 <= hit[0] < 300:
+            if hit:
                 return _Response(hit[0], hit[1], url)
 
         if bucket not in self._buckets:
@@ -252,6 +252,7 @@ class Client:
             if status == 429 or status in RETRY_STATUSES:
                 self._circuit.on_failure()
                 if attempt == max_retries - 1:
+                    self._cache_result(url, status, resp, use_cache, method)
                     return _from_resp(resp)
                 wait = _backoff(attempt)
                 wait = max(wait, _retry_after(resp.headers.get("Retry-After"), wait))
@@ -267,21 +268,30 @@ class Client:
                 logger.warning("Blocked page signature on %s", url)
                 self._circuit.on_failure()
                 if attempt == max_retries - 1:
+                    self._cache_result(url, status, resp, use_cache, method)
                     return _from_resp(resp)
                 time.sleep(_backoff(attempt))
                 continue
 
             self._circuit.on_success()
-            if use_cache and method == "GET" and self._cache and 200 <= status < 300:
-                try:
-                    self._cache.put(url, status, resp.content)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("cache put failed: %s", exc)
+            self._cache_result(url, status, resp, use_cache, method)
             return _from_resp(resp)
 
         if last_exc:
             raise last_exc
         raise RuntimeError(f"request failed without exception: {method} {url}")
+
+    def _cache_result(self, url: str, status: int, resp, use_cache: bool, method: str) -> None:
+        """Cache any GET response (2xx and errors) so a rerun never re-hits TM.
+
+        Known-bad URLs (403 blocks) are remembered for the cache TTL — the
+        resume-cache contract is "check first, don't re-request".
+        """
+        if use_cache and method == "GET" and self._cache:
+            try:
+                self._cache.put(url, status, resp.content)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("cache put failed: %s", exc)
 
     # --- conveniences ---------------------------------------------------------
     def api(self, path: str, **kwargs) -> Any:
