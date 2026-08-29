@@ -28,6 +28,7 @@ import requests
 from cache import ResumeCache
 from config import (
     API_BASE,
+    BLOCK_STREAK,
     CACHE_ENABLED,
     CACHE_PATH,
     CACHE_TTL,
@@ -314,6 +315,8 @@ class Client:
         # AIMD concurrency: starts at `concurrency`, grows to `concurrency*2` on
         # success, halves on throttle. Token bucket still caps the global rate.
         self._sem = AdaptiveSemaphore(concurrency, 1, max(concurrency * 2, 4), ai_after_ok=50)
+        self._block_streak: dict[str, int] = {}
+        self._lock = threading.Lock()
 
         # AIMD on the rate: each bucket gets a RateAimer that halves the rps on
         # throttle and slowly grows back to the configured max. Learned rates are
@@ -406,7 +409,7 @@ class Client:
 
         if use_cache and method == "GET" and self._cache:
             hit = self._cache.get(url)
-            if hit:
+            if hit and 200 <= hit[0] < 300:
                 return _Response(hit[0], hit[1], url)
 
         if bucket not in self._buckets:
@@ -441,6 +444,11 @@ class Client:
                     continue
 
             status = resp.status_code
+
+            if status == 403:
+                self._note_block(bucket)
+                self._cache_result(url, status, resp, use_cache, method)
+                return _from_resp(resp)
 
             if status == 429 or status in RETRY_STATUSES:
                 self._throttle(bucket)
@@ -482,29 +490,48 @@ class Client:
         if aimer and aimer.on_throttle():
             self._buckets[bucket].set_rate(aimer.rate)
 
+    def _note_block(self, bucket: str) -> None:
+        """Count a 403 block; consecutive 403s open the circuit, a long streak
+        also halves the rate.
+
+        Scattered honeypots produce isolated 403s; a real volume-based TM block
+        produces a long run, so a streak >= BLOCK_STREAK triggers the adaptive
+        rate (like a throttle).
+        """
+        self._circuit.on_failure()
+        with self._lock:
+            streak = self._block_streak.get(bucket, 0) + 1
+            self._block_streak[bucket] = streak
+        if streak >= BLOCK_STREAK:
+            with self._lock:
+                self._block_streak[bucket] = 0
+            logger.warning("403 block streak %d on %s -> halving rate", streak, bucket)
+            self._sem.on_throttle()
+            aimer = self._aimers.get(bucket)
+            if aimer and aimer.on_throttle():
+                self._buckets[bucket].set_rate(aimer.rate)
+
     def _success(self, bucket: str) -> None:
         """React to a successful request: reset circuit, maybe grow the rate."""
         self._circuit.on_success()
         self._sem.on_success()
+        with self._lock:
+            self._block_streak[bucket] = 0
         aimer = self._aimers.get(bucket)
         if aimer and aimer.on_success():
             self._buckets[bucket].set_rate(aimer.rate)
 
     def _cache_result(self, url: str, status: int, resp, use_cache: bool, method: str) -> None:
-        """Cache GET responses so a rerun never re-hits TM.
+        """Cache GET responses so a rerun never re-hits TM for SUCCESSES.
 
-        Only *persistent* outcomes are cached: 2xx (resume) and 4xx blocks
-        (403 honeypots, 404s). Transient statuses are NOT cached — 429 (rate
-        limit) and 5xx mean "try again later", and freezing them for the TTL
-        would wrongly skip URLs that work on the next run.
+        Only 2xx responses are cached (resume). 403/404 blocks and transient
+        429/5xx are NOT cached: a block may clear, and the retry queue (plus a
+        rerun) re-tries them instead of skipping — so no player is left without
+        data just because TM was blocking at fetch time.
         """
         if not (use_cache and method == "GET" and self._cache):
             return
-        if 200 <= status < 300:
-            pass
-        elif 400 <= status < 500 and status != 429:
-            pass
-        else:
+        if not (200 <= status < 300):
             return
         try:
             self._cache.put(url, status, resp.content)

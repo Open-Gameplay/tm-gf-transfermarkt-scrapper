@@ -59,6 +59,9 @@ def main() -> None:
     parser.add_argument("--scope", choices=["pilot", "tier1"], default="pilot")
     parser.add_argument("--spot", type=int, default=5,
                         help="number of players to fetch spot profiles/market values for (0 = none)")
+    parser.add_argument("--all-profiles", action="store_true",
+                        help="fetch profiles AND market value history for EVERY player "
+                             "in scope (long: ~12k TM requests for a full Tier-1 crawl)")
     parser.add_argument("--images", action="store_true", help="download images after building canon")
     args = parser.parse_args()
 
@@ -89,7 +92,7 @@ def main() -> None:
     logger.info("fetching coach profiles ...")
     coach_profiles = coaches.coach_profiles(coach_ids)
 
-    # Spot profiles / market values for a limited player subset (collection data).
+    # Profiles / market values: either spot (a few random players) or every player.
     all_player_ids = sorted({
         p["id"]
         for roster in list(club_rosters.values()) + list(nt_rosters.values())
@@ -97,10 +100,14 @@ def main() -> None:
         if p.get("id")
     })
     logger.info("players in scope: %d", len(all_player_ids))
-    spot_ids = random.sample(all_player_ids, min(args.spot, len(all_player_ids))) if args.spot else []
-    player_profiles = profiles.player_profiles(spot_ids) if spot_ids else {}
-    market_values = mv_fetch.player_market_values(spot_ids) if spot_ids else {}
-    logger.info("spot profiles=%d market_values=%d", len(player_profiles), len(market_values))
+    if args.all_profiles:
+        profile_ids = all_player_ids
+    else:
+        profile_ids = random.sample(all_player_ids, min(args.spot, len(all_player_ids))) if args.spot else []
+    player_profiles = profiles.player_profiles(profile_ids) if profile_ids else {}
+    market_values = mv_fetch.player_market_values(profile_ids) if profile_ids else {}
+    logger.info("profiles=%d market_values=%d (target=%d)",
+                len(player_profiles), len(market_values), len(profile_ids))
 
     build_canon(
         club_rosters=club_rosters,

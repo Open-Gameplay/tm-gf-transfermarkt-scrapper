@@ -1,18 +1,23 @@
-"""Market values: spot fetches of value history (needed for max_market_value).
+"""Market values: per-player value history (needed for max_market_value).
 
 Primary source is the local API (GET /players/{id}/market_value), but TM
 currently blocks that endpoint for the API's plain-requests/static-UA transport
 (403). Our curl_cffi client fetches the underlying chart API directly, so on an
 API 403/5xx we fall back to the direct TM ceapi JSON — the same justification as
 the /mitarbeiter/ direct access in fetch/coaches.py.
+
+Failures are NOT skipped: failed players go to a pending queue and are retried
+in later rounds after a cooldown (FETCH_RETRY_ROUNDS / FETCH_RETRY_COOLDOWN).
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 
 from client import Client
+from config import FETCH_RETRY_COOLDOWN, FETCH_RETRY_ROUNDS
 
 logger = logging.getLogger("scraper.fetch.market_values")
 
@@ -21,25 +26,54 @@ CEAPI_URL = "https://www.transfermarkt.com/ceapi/marketValueDevelopment/graph/{p
 WAPPEN_CLUB_RE = re.compile(r"/wappen/(?:profil|big)/(\d+)\.")
 
 
-def player_market_values(player_ids: list[str], client: Client | None = None) -> dict[str, dict]:
-    """Fetch market values + history for the given player ids.
+def player_market_values(
+    player_ids: list[str],
+    client: Client | None = None,
+    *,
+    rounds: int | None = None,
+    cooldown: float | None = None,
+) -> dict[str, dict]:
+    """Fetch market values + history for all player ids, retrying failures.
 
     Returns {player_id: {updatedAt, id, marketValue, marketValueHistory, ranking}}.
     Falls back to direct TM ceapi JSON when the API endpoint is blocked (403/5xx).
     """
     client = client or _default_client()
+    rounds = rounds if rounds is not None else FETCH_RETRY_ROUNDS
+    cooldown = cooldown if cooldown is not None else FETCH_RETRY_COOLDOWN
+
     out: dict[str, dict] = {}
-    for pid in player_ids:
-        try:
-            # weight=2: the endpoint scrapes the page AND the chart API — 2 live
-            # TM requests per call, so the rate limiter consumes 2 tokens.
-            out[pid] = client.api(f"players/{pid}/market_value", weight=2)
-        except Exception as exc:
-            logger.warning("market value %s via API failed (%s); trying direct TM ceapi", pid, exc)
+    pending = list(player_ids)
+    for round_no in range(1, rounds + 1):
+        still: list[str] = []
+        for i, pid in enumerate(pending, 1):
             try:
-                out[pid] = _fetch_direct(pid, client)
-            except Exception as exc2:
-                logger.warning("market value %s direct TM fetch failed: %s", pid, exc2)
+                # weight=2: the endpoint scrapes the page AND the chart API — 2 live
+                # TM requests per call, so the rate limiter consumes 2 tokens.
+                out[pid] = client.api(f"players/{pid}/market_value", weight=2)
+            except Exception as exc:
+                logger.debug("market value %s via API failed (%s); trying direct TM ceapi",
+                             pid, exc)
+                try:
+                    out[pid] = _fetch_direct(pid, client)
+                except Exception as exc2:
+                    logger.warning("market value %s failed (round %d/%d): %s",
+                                   pid, round_no, rounds, exc2)
+                    still.append(pid)
+            if i % 100 == 0 or i == len(pending):
+                logger.info("market values round %d/%d: %d/%d done",
+                            round_no, rounds, i, len(pending))
+        pending = still
+        if not pending:
+            break
+        if round_no < rounds:
+            logger.info("market values: %d still failing, waiting %.0fs before round %d",
+                        len(pending), cooldown, round_no + 1)
+            time.sleep(cooldown)
+
+    if pending:
+        logger.warning("market values: %d players still failed after %d rounds — rerun "
+                       "to retry them (failures are not cached)", len(pending), rounds)
     return out
 
 

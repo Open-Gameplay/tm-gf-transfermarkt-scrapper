@@ -96,12 +96,21 @@ def test_cache_disabled_per_request(mock_server, tmp_path):
 
 
 def test_caches_error_statuses(mock_server, tmp_path):
-    """A 403 response is cached so a rerun does not re-hit TM."""
+    """A 403 is NOT cached — it must be retried (the retry queue / a rerun)."""
     c = _client(tmp_path)
+    mock_server.scenario = [(403, b"blocked", {}), (403, b"blocked", {})]
+    c.request("GET", mock_server.url + "/blocked")
+    c.request("GET", mock_server.url + "/blocked")
+    assert len(mock_server.requests) == 2, "403 must not be cached as done"
+
+
+def test_cache_hit_only_serves_2xx(mock_server, tmp_path):
+    """A stale non-2xx entry in the resume cache must be ignored (retried)."""
+    c = _client(tmp_path)
+    c._cache.put(mock_server.url + "/stale403", 403, b"")
     mock_server.scenario = [(403, b"blocked", {})]
-    c.request("GET", mock_server.url + "/blocked")
-    c.request("GET", mock_server.url + "/blocked")
-    assert len(mock_server.requests) == 1, "403 should be cached too"
+    c.request("GET", mock_server.url + "/stale403")
+    assert len(mock_server.requests) == 1, "stale cached 403 must be re-fetched"
 
 
 def test_429_is_not_cached(mock_server, tmp_path):
@@ -129,3 +138,27 @@ def test_circuit_breaker_opens_on_repeated_failures(mock_server, tmp_path):
         mock_server.scenario.append((500, b"err", {}))
     c.request("GET", mock_server.url + "/x", max_retries=3)
     assert c._circuit.opened_until > 0, "circuit should open"
+
+
+def test_403_streak_halves_rate(mock_server, tmp_path):
+    """A run of 403 blocks must halve the adaptive rate (volume-based block)."""
+    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
+               max_retries=1, circuit_fails=999, cache=False)
+    for i in range(6):
+        mock_server.scenario.append((403, b"blocked", {}))
+    for i in range(6):
+        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
+    assert c._buckets["html"].rps < 8.0, "rate should have been halved after a 403 streak"
+
+
+def test_403_streak_resets_on_success(mock_server, tmp_path):
+    """Scattered honeypots (broken by successes) must NOT halve the rate."""
+    c = Client(html_rps=8.0, html_rps_min=0.5, adaptive_rate=True, rates_path=None,
+               max_retries=1, circuit_fails=999, cache=False)
+    mock_server.scenario = [
+        (403, b"", {}), (403, b"", {}), (200, b"ok", {}),
+        (403, b"", {}), (403, b"", {}), (403, b"", {}), (403, b"", {}),
+    ]
+    for i in range(7):
+        c.request("GET", mock_server.url + f"/p{i}", use_cache=False)
+    assert c._buckets["html"].rps == 8.0, "scattered 403s must not throttle"
