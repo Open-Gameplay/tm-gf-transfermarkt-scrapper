@@ -117,6 +117,54 @@ class CircuitBreaker:
                              self.pause, self.fails)
 
 
+class AdaptiveSemaphore:
+    """AIMD concurrency control.
+
+    After `ai_after_ok` consecutive successes the concurrency ceiling grows by
+    one (up to `max_v`); after any throttle (429/5xx or connection error) it is
+    halved (multiplicative decrease, not below `min_v`). The token bucket still
+    enforces the global rate, so AIMD only tunes how many requests are in flight.
+    """
+
+    def __init__(self, init: int, min_v: int, max_v: int, ai_after_ok: int):
+        self.min_v = max(min_v, 1)
+        self.max_v = max(max_v, self.min_v)
+        self.permits = max(min(init, self.max_v), self.min_v)
+        self.in_use = 0
+        self.ok_streak = 0
+        self.ai_after_ok = ai_after_ok
+        self.cv = threading.Condition()
+
+    def __enter__(self) -> "AdaptiveSemaphore":
+        with self.cv:
+            while self.in_use >= self.permits:
+                self.cv.wait()
+            self.in_use += 1
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        with self.cv:
+            self.in_use -= 1
+            self.cv.notify()
+
+    def on_success(self) -> None:
+        with self.cv:
+            self.ok_streak += 1
+            if self.ok_streak >= self.ai_after_ok and self.permits < self.max_v:
+                self.permits += 1
+                self.ok_streak = 0
+                logger.info("AIMD: concurrency +1 -> %d", self.permits)
+                self.cv.notify_all()
+
+    def on_throttle(self) -> None:
+        with self.cv:
+            self.ok_streak = 0
+            new_permits = max(self.permits // 2, self.min_v)
+            if new_permits < self.permits:
+                logger.warning("AIMD: concurrency %d -> %d (throttled)", self.permits, new_permits)
+                self.permits = new_permits
+
+
 class _Response:
     """Thin requests.Response-like object for cache hits."""
 
@@ -158,7 +206,7 @@ class Client:
         concurrency: int = CONCURRENCY,
         circuit_fails: int = CIRCUIT_FAILS,
         circuit_pause: float = CIRCUIT_PAUSE,
-        cache: ResumeCache | None = None,
+        cache: ResumeCache | None | bool = None,
     ):
         self.api_base = api_base
         self.timeout = timeout
@@ -168,10 +216,15 @@ class Client:
             "cdn": TokenBucket(cdn_rps, cdn_burst),
         }
         self._circuit = CircuitBreaker(circuit_fails, circuit_pause)
-        self._cache = cache if cache is not None else (
-            ResumeCache(CACHE_PATH, CACHE_TTL) if CACHE_ENABLED else None
-        )
-        self._sem = threading.Semaphore(concurrency)
+        if cache is False:
+            self._cache = None
+        else:
+            self._cache = cache if cache is not None else (
+                ResumeCache(CACHE_PATH, CACHE_TTL) if CACHE_ENABLED else None
+            )
+        # AIMD concurrency: starts at `concurrency`, grows to `concurrency*2` on
+        # success, halves on throttle. Token bucket still caps the global rate.
+        self._sem = AdaptiveSemaphore(concurrency, 1, max(concurrency * 2, 4), ai_after_ok=50)
         self._local = threading.local()
         logger.info(
             "client: backend=%s html=%.2frps cdn=%.2frps concurrency=%d cache=%s",
@@ -234,6 +287,7 @@ class Client:
                 except (requests.exceptions.Timeout,
                         requests.exceptions.ConnectionError) as exc:
                     last_exc = exc
+                    self._sem.on_throttle()
                     self._circuit.on_failure()
                     if attempt == max_retries - 1:
                         raise
@@ -241,6 +295,7 @@ class Client:
                     continue
                 except Exception as exc:  # curl_cffi has its own exceptions
                     last_exc = exc
+                    self._sem.on_throttle()
                     self._circuit.on_failure()
                     if attempt == max_retries - 1:
                         raise
@@ -250,6 +305,7 @@ class Client:
             status = resp.status_code
 
             if status == 429 or status in RETRY_STATUSES:
+                self._sem.on_throttle()
                 self._circuit.on_failure()
                 if attempt == max_retries - 1:
                     self._cache_result(url, status, resp, use_cache, method)
@@ -274,6 +330,7 @@ class Client:
                 continue
 
             self._circuit.on_success()
+            self._sem.on_success()
             self._cache_result(url, status, resp, use_cache, method)
             return _from_resp(resp)
 

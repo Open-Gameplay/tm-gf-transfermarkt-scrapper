@@ -31,3 +31,16 @@ honeypot) — пропускаются и кэшируются. `/players/{id}/m
 прогон — 0.6 с, ноль сетевых запросов (resume-кэш, идемпотентно). Ветка `scraper-v2` от `main`.
 
 ## [2026-08-29] session | см. milestone выше
+
+## [2026-08-29] decision | перенесены тесты и AIMD из transfermarkt_scrapper_upgraded
+
+Разобран `C:\Users\Egor\Desktop\transfermarkt_scrapper_upgraded\upgraded` — это ветка `fix` +
+pytest-набор + пример миграции. Полезное для scraper-v2: **pytest-набор** (30 тестов: token-bucket,
+AIMD, circuit breaker, resume-кэш, интеграция `client.request()` против mock-HTTP-сервера) и
+**`AdaptiveSemaphore` (AIMD)** — у нас был фиксированный семафор. Добавлены в scraper-v2:
+`AdaptiveSemaphore` в `client.py` (старт `TM_CONCURRENCY`, рост до ×2, деление пополам при
+429/5xx; token-bucket всё равно режет глобальную частоту), `tests/` + `pytest.ini` +
+`requirements.txt`. Тесты адаптированы под наш API (кэш ключуется URL, `Client`-класс). Все 30
+проходят; пилот по-прежнему идемпотентен (0.8 с, ноль сети). Сам `tm_common.py` из папки —
+тот же, что у нас за основой; отличие только в дефолтах AIMD 4..8 (не переносили — наши лимиты
+1.5 rps, высокая конкурентность просто встанет в очередь).

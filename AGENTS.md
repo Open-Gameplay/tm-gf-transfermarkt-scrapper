@@ -51,10 +51,12 @@ clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `c
 .venv\Scripts\python crawl.py --scope tier1            # полный Tier-1
 .venv\Scripts\python crawl.py --scope pilot --spot 10 --images
 .venv\Scripts\python probe.py --html | --cdn           # перезамер лимитов (осторожно!)
+.venv\Scripts\python -m pytest                         # 30 тестов HTTP-слоя (без сети)
 ```
 
-Зависимости: `requests`, `beautifulsoup4`, `lxml`, `curl_cffi`, `jsonschema` (уже в `.venv`).
-Параметры — через env `TM_*` (лимиты, кэш, пути — см. `config.py`).
+Зависимости: `requirements.txt` (`requests`, `beautifulsoup4`, `lxml`, `curl_cffi`, `jsonschema`,
+`pytest`, `pytest-timeout`; уже в `.venv`). Параметры — через env `TM_*` (лимиты, кэш, пути — см.
+`config.py`).
 
 ## Устройство вики
 
