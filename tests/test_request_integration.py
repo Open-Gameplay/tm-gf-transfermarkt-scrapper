@@ -103,6 +103,15 @@ def test_caches_error_statuses(mock_server, tmp_path):
     assert len(mock_server.requests) == 1, "403 should be cached too"
 
 
+def test_429_is_not_cached(mock_server, tmp_path):
+    """429 is transient (rate limit) — must not be frozen in the resume cache."""
+    c = _client(tmp_path, max_retries=1)
+    mock_server.scenario = [(429, b"slow", {"Retry-After": "0"})]
+    resp = c.request("GET", mock_server.url + "/flaky")
+    assert resp.status_code == 429  # retries exhausted
+    assert c._cache.get(mock_server.url + "/flaky") is None, "429 must not be cached"
+
+
 def test_user_agent_is_realistic(mock_server, tmp_path):
     from config import USER_AGENTS
 

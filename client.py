@@ -339,16 +339,25 @@ class Client:
         raise RuntimeError(f"request failed without exception: {method} {url}")
 
     def _cache_result(self, url: str, status: int, resp, use_cache: bool, method: str) -> None:
-        """Cache any GET response (2xx and errors) so a rerun never re-hits TM.
+        """Cache GET responses so a rerun never re-hits TM.
 
-        Known-bad URLs (403 blocks) are remembered for the cache TTL — the
-        resume-cache contract is "check first, don't re-request".
+        Only *persistent* outcomes are cached: 2xx (resume) and 4xx blocks
+        (403 honeypots, 404s). Transient statuses are NOT cached — 429 (rate
+        limit) and 5xx mean "try again later", and freezing them for the TTL
+        would wrongly skip URLs that work on the next run.
         """
-        if use_cache and method == "GET" and self._cache:
-            try:
-                self._cache.put(url, status, resp.content)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("cache put failed: %s", exc)
+        if not (use_cache and method == "GET" and self._cache):
+            return
+        if 200 <= status < 300:
+            pass
+        elif 400 <= status < 500 and status != 429:
+            pass
+        else:
+            return
+        try:
+            self._cache.put(url, status, resp.content)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("cache put failed: %s", exc)
 
     # --- conveniences ---------------------------------------------------------
     def api(self, path: str, **kwargs) -> Any:
