@@ -14,7 +14,8 @@ GameplayFootball. Единый канон и конвейер — [[данные
 ## Состояние проекта
 
 **Ветка `scraper-v2` — актуальная.** Переписанный скрейпер по дизайну [[конвейер]]: `config.py`,
-`client.py` (curl_cffi, глобальный token-bucket HTML 1.5 rps / CDN 10 rps, circuit breaker,
+`client.py` (curl_cffi, глобальный token-bucket HTML 8 rps / CDN 15 rps, weight-aware для
+market_value, circuit breaker,
 ретраи с Retry-After), `cache.py` (SQLite resume-кэш всех статусов), `fetch/` (competitions →
 clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `canon_schema.json`,
 `download_images.py`, `crawl.py`, `probe.py`. Лимиты установлены probe-экспериментом 2026-08-29,
@@ -71,7 +72,7 @@ clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `c
 ## Workflow
 
 - Код и комментарии — на английском; вики и этот файл — на русском.
-- **Лимиты к TM: HTML 1.5 rps, CDN 10 rps** (установлены probe 2026-08-29, см. [[конвейер]]).
+- **Лимиты к TM: HTML 8 rps, CDN 15 rps** (установлены probe 2026-08-29, см. [[конвейер]]).
   При бане (429/403/блок-страница) — остановиться, не молотить ретраями; circuit breaker сам
   даст паузу, заблокированные URL кэшируются.
 - Три хука (.agent/hooks/ + плагин opencode в .opencode/plugins/) поддерживают контур вики.

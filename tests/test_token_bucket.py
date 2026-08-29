@@ -58,3 +58,17 @@ def test_burst_refills_over_time():
     for _ in range(3):
         b.acquire()
     assert time.monotonic() - t0 < 0.05
+
+
+def test_weight_consumes_multiple_tokens():
+    """A weight=2 request (e.g. market_value: page + chart) spends 2 tokens."""
+    b = TokenBucket(rps=10, burst=5)
+    b.acquire(weight=3)
+    t0 = time.monotonic()
+    b.acquire(weight=3)  # only 2 tokens left -> must wait for 1 more (0.1s)
+    assert time.monotonic() - t0 >= 0.09
+    b2 = TokenBucket(rps=100, burst=10)
+    t0 = time.monotonic()
+    b2.acquire(weight=2)
+    b2.acquire(weight=2)
+    assert time.monotonic() - t0 < 0.05  # burst covers both

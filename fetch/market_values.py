@@ -31,7 +31,9 @@ def player_market_values(player_ids: list[str], client: Client | None = None) ->
     out: dict[str, dict] = {}
     for pid in player_ids:
         try:
-            out[pid] = client.api(f"players/{pid}/market_value")
+            # weight=2: the endpoint scrapes the page AND the chart API — 2 live
+            # TM requests per call, so the rate limiter consumes 2 tokens.
+            out[pid] = client.api(f"players/{pid}/market_value", weight=2)
         except Exception as exc:
             logger.warning("market value %s via API failed (%s); trying direct TM ceapi", pid, exc)
             try:

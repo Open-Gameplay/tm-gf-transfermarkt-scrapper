@@ -1,19 +1,23 @@
 """Probe the real Transfermarkt rate ceilings before any mass crawl.
 
-Two probes:
+Three probes:
 
-  --html   HTML endpoints via the local API (/clubs/{id}/players). Each API
-           call is one live TM request, so the observed rate is the TM rate.
-           Levels escalate conservatively (0.5 -> 1 -> 1.5 -> 2 -> 3 rps) with
-           a cooldown between levels. A 429/403/5xx or a block-page signature
-           marks the level as unsafe.
+  --html         HTML endpoints via the local API (/clubs/{id}/players). Each
+                 API call is one live TM request, so the observed rate is the
+                 TM rate. Levels escalate conservatively with cooldowns.
 
-  --cdn    Image downloads from img.a.transfermarkt.technology (CDN), which is
-           hypothesized NOT to be throttled like www.transfermarkt.com. Probes
-           a few distinct real image URLs at higher rates.
+  --html-direct  Direct probe of www.transfermarkt.com (bypasses the API, which
+                 itself caps throughput at its threadpool ~40 threads). Finds
+                 the real TM/Cloudflare ceiling and classifies the block type
+                 (429 / 403 / challenge / connection reset) — levels escalate
+                 until the first block, then stop.
+
+  --cdn          Image downloads from img.a.transfermarkt.technology (CDN),
+                 which is NOT throttled like www.transfermarkt.com.
 
 Usage:
     python probe.py --html
+    python probe.py --html-direct
     python probe.py --cdn
 
 The recommended safe rate (70% of the highest clean level) is printed and
@@ -37,10 +41,14 @@ logger = logging.getLogger("scraper.probe")
 
 HTML_LEVELS = [float(x) for x in
                os.getenv("TM_PROBE_LEVELS", "0.5,1.0,1.5,2.0,3.0").split(",")]
+DIRECT_LEVELS = [float(x) for x in
+                 os.getenv("TM_PROBE_DIRECT_LEVELS", "5,10,20,40,60,75").split(",")]
 CDN_LEVELS = [float(x) for x in
               os.getenv("TM_PROBE_CDN_LEVELS", "2.0,5.0,10.0").split(",")]
 TOTAL = int(os.getenv("TM_PROBE_TOTAL", "20"))
 COOLDOWN = float(os.getenv("TM_PROBE_COOLDOWN", "60"))  # seconds between levels
+
+DIRECT_URL = os.getenv("TM_PROBE_DIRECT_URL", "https://www.transfermarkt.com/")
 
 THROTTLE_STATUSES = {403, 429, 500, 502, 503, 504, 520, 522, 524}
 BLOCK_SIGNATURES = ("cf-chl-", "attention required", "are you a human",
@@ -55,30 +63,46 @@ def _is_blocked_body(text: str) -> bool:
     return any(sig in head for sig in BLOCK_SIGNATURES)
 
 
+def _classify(status: int, resp, body_sig: bool) -> str:
+    """Short label for a block response."""
+    if status == 429:
+        ra = (resp.headers.get("Retry-After") or "?") if resp else "?"
+        return f"429 retry-after={ra}"
+    if status == 403:
+        return "403 body=challenge" if body_sig else "403 body=forbidden"
+    if status in THROTTLE_STATUSES:
+        return f"{status} (server)"
+    return f"{status}"
+
+
 def _probe_level(client: Client, urls_or_paths: list[str], bucket: str) -> dict:
     counts = {"ok": 0, "throttled": 0, "errors": 0, "blocked_body": 0,
               "first_throttle_at": None, "statuses": {}}
     for i in range(1, TOTAL + 1):
         target = urls_or_paths[i % len(urls_or_paths)]
         try:
-            if bucket == "html":
+            if target.startswith("http"):
+                url = target
+            elif bucket == "html":
                 url = f"{client.api_base}/{target.lstrip('/')}"
             else:
                 url = target
             resp = client.request("GET", url, bucket=bucket, use_cache=False, max_retries=1)
             status = resp.status_code
+            body_sig = _is_blocked_body(resp.text)
             counts["statuses"][status] = counts["statuses"].get(status, 0) + 1
-            if status in THROTTLE_STATUSES or _is_blocked_body(resp.text):
+            if status in THROTTLE_STATUSES or body_sig:
                 counts["throttled"] += 1
+                counts["blocked_body"] += body_sig
                 counts["first_throttle_at"] = counts["first_throttle_at"] or i
-                marker = "BLOCK"
+                marker = f"BLOCK {_classify(status, resp, body_sig)}"
             elif 200 <= status < 400:
                 counts["ok"] += 1
-                marker = "ok"
+                marker = f"ok {status}"
             else:
                 counts["errors"] += 1
-                marker = "?"
-            print(f"  [{i:>3}/{TOTAL}] {marker} HTTP {status}", flush=True)
+                marker = f"? {status}"
+            print(f"  [{i:>3}/{TOTAL}] {marker}", flush=True)
         except (requests.exceptions.RequestException, RuntimeError) as exc:
             counts["errors"] += 1
             counts["first_throttle_at"] = counts["first_throttle_at"] or i
@@ -105,6 +129,32 @@ def probe_html() -> None:
             print(f"  cooldown {COOLDOWN}s ...")
             time.sleep(COOLDOWN)
     _report("HTML", summary)
+
+
+def probe_html_direct() -> None:
+    """Direct TM probe: finds the real ceiling and stops at the first block."""
+    print(f"DIRECT TM probe {DIRECT_URL} (levels {DIRECT_LEVELS} rps, {TOTAL}/level, "
+          f"stops at first block)")
+    summary: list[tuple[float, dict]] = []
+    for rps in DIRECT_LEVELS:
+        client = Client(html_rps=rps, html_burst=1, max_retries=1,
+                        concurrency=1, circuit_fails=999)
+        print(f"\n=== DIRECT @ {rps:.2f} rps x {TOTAL} ===")
+        counts = _probe_level(client, [DIRECT_URL], "html")
+        summary.append((rps, counts))
+        blocked = counts["throttled"] + counts["errors"]
+        if blocked >= max(2, TOTAL // 10):
+            print(f"  -> FIRST BLOCK at {rps} rps "
+                  f"(request #{counts['first_throttle_at']}, "
+                  f"throttled={counts['throttled']} err={counts['errors']})")
+            _report("DIRECT HTML", summary)
+            return
+        print(f"  -> clean at {rps} rps: ok={counts['ok']} "
+              f"statuses={counts['statuses']}")
+        if rps != DIRECT_LEVELS[-1]:
+            print(f"  cooldown {COOLDOWN}s ...")
+            time.sleep(COOLDOWN)
+    _report("DIRECT HTML", summary)
 
 
 def probe_cdn() -> None:
@@ -172,11 +222,14 @@ def _report(name: str, summary: list[tuple[float, dict]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Probe Transfermarkt rate ceilings.")
     parser.add_argument("--html", action="store_true")
+    parser.add_argument("--html-direct", action="store_true")
     parser.add_argument("--cdn", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     random.seed(20260829)
-    if args.cdn:
+    if args.html_direct:
+        probe_html_direct()
+    elif args.cdn:
         probe_cdn()
     else:
         probe_html()

@@ -62,7 +62,12 @@ CDN_HOSTS = ("img.a.transfermarkt.technology", "tmssl.akamaized.net")
 
 
 class TokenBucket:
-    """Thread-safe token bucket: `rps` tokens/sec, capacity = burst."""
+    """Thread-safe token bucket: `rps` tokens/sec, capacity = burst.
+
+    A single request can consume several tokens via `weight` — used for
+    endpoints that cost more than one live TM request per call (e.g.
+    /players/{id}/market_value fetches the page AND the chart API = 2).
+    """
 
     def __init__(self, rps: float, burst: int):
         self.rps = max(rps, 0.01)
@@ -71,16 +76,17 @@ class TokenBucket:
         self.last = time.monotonic()
         self.lock = threading.Lock()
 
-    def acquire(self) -> None:
+    def acquire(self, weight: float = 1.0) -> None:
+        weight = max(weight, 1.0)
         while True:
             with self.lock:
                 now = time.monotonic()
                 self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rps)
                 self.last = now
-                if self.tokens >= 1.0:
-                    self.tokens -= 1.0
+                if self.tokens >= weight:
+                    self.tokens -= weight
                     return
-                wait = (1.0 - self.tokens) / self.rps
+                wait = (weight - self.tokens) / self.rps
             time.sleep(wait)
 
 
@@ -254,12 +260,18 @@ class Client:
         url: str,
         *,
         bucket: str = "html",
+        weight: float = 1.0,
         use_cache: bool = True,
         timeout: float | None = None,
         max_retries: int | None = None,
         **kwargs,
     ) -> _Response:
-        """Perform one request with cache, rate limit, circuit and retries."""
+        """Perform one request with cache, rate limit, circuit and retries.
+
+        `weight` is the number of live TM requests a single call costs (the
+        rate limiter consumes that many tokens), so expensive endpoints are
+        automatically paced slower within the same global budget.
+        """
         method = method.upper()
         timeout = timeout or self.timeout
         max_retries = max_retries or self.max_retries
@@ -275,7 +287,7 @@ class Client:
         last_exc: Exception | None = None
         for attempt in range(max_retries):
             self._circuit.gate()
-            self._buckets[bucket].acquire()
+            self._buckets[bucket].acquire(weight)
 
             with self._sem:
                 headers = dict(kwargs.pop("headers", {}) or {})

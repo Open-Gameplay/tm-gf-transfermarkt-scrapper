@@ -18,14 +18,17 @@ API_BASE = os.getenv("TM_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 # --- Rate limits -------------------------------------------------------------
 # HTML endpoints go through the local API: one API call == one live TM request.
 # Established by probe on 2026-08-29 (see docs/wiki/конвейер.md, section «Лимиты»):
-#   clean sustained at 2.0 rps, clean bursts at 3.0 rps -> safe = 1.5 rps.
-HTML_RPS = float(os.getenv("TM_HTML_RPS", "1.5"))
-HTML_BURST = int(os.getenv("TM_HTML_BURST", "2"))
+#   - via API: clean at 2.0 rps sustained, 3.0 rps burst;
+#   - direct TM: clean even at 75 rps burst (ceiling is higher) -> safe = 8.0 rps
+#     (9x margin below the observed ceiling; the external "blocks at 75 rps" were
+#     API threadpool overload, not a TM block).
+HTML_RPS = float(os.getenv("TM_HTML_RPS", "8.0"))
+HTML_BURST = int(os.getenv("TM_HTML_BURST", "4"))
 
-# CDN image hosts (img.a.transfermarkt.technology, ...) — probed separately and
-# NOT throttled like www.transfermarkt.com (clean at 20 rps) -> safe = 10 rps.
-CDN_RPS = float(os.getenv("TM_CDN_RPS", "10.0"))
-CDN_BURST = int(os.getenv("TM_CDN_BURST", "4"))
+# CDN image hosts (img.a.transfermarkt.technology, ...) — probed separately,
+# NOT throttled like www.transfermarkt.com (clean at 20 rps) -> safe = 15 rps.
+CDN_RPS = float(os.getenv("TM_CDN_RPS", "15.0"))
+CDN_BURST = int(os.getenv("TM_CDN_BURST", "6"))
 
 # --- HTTP --------------------------------------------------------------------
 HTTP_TIMEOUT = float(os.getenv("TM_HTTP_TIMEOUT", "30"))
