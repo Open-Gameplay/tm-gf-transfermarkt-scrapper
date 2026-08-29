@@ -13,26 +13,25 @@ GameplayFootball. Единый канон и конвейер — [[данные
 
 ## Состояние проекта
 
-**Ветка `main` сломана** (в т.ч. баны TM): задержки по умолчанию 0, воркеры 8–20, статичный UA
-Chrome 91 (2021), голый `requests` без TLS-fingerprint, ретраится только 503, 429 молча глотается;
-`tm_999` неидемпотентен — перезаписывает собственные входные файлы. Ветка `fix` намечает решение:
-rate-limit ≤2 rps, curl_cffi, SQLite-resume-кэш, идемпотентность. **Новый код писать в духе `fix`,
-не в `main`.**
+**Ветка `scraper-v2` — актуальная.** Переписанный скрейпер по дизайну [[конвейер]]: `config.py`,
+`client.py` (curl_cffi, глобальный token-bucket HTML 1.5 rps / CDN 10 rps, circuit breaker,
+ретраи с Retry-After), `cache.py` (SQLite resume-кэш всех статусов), `fetch/` (competitions →
+clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `canon_schema.json`,
+`download_images.py`, `crawl.py`, `probe.py`. Лимиты установлены probe-экспериментом 2026-08-29,
+пилот собран и валидирован (детали — [[конвейер]], [[данные]]).
+
+Ветки `main`/`fix` — старый конвейер `tm_1…tm_999` (сломан: баны TM, неидемпотентный `tm_999`);
+не развивать. Новый код писать в структуре `scraper-v2`.
 
 ## Ядро архитектуры
 
-- Общий HTTP-слой — `tm_common.py` (`create_session`, `request_with_retries`, `get_soup`,
-  `get_json`, `extract_id_from_url`, `load_json`/`save_json`).
-- Скрипты по порядку: `tm_1_teams_2` (сборные+игроки+тренеры) → `tm_1_2_filter_coaches_by_teams`
-  → `tm_2_players_profiles_2` → `tm_3_legends_profiles` → `tm_4_market_values_2` →
-  `tm_4_2_filter_market_values_by_players_profiles` → `tm_5_clubs_2` → `tm_5_2_filter_clubs_by_players_profiles`
-  → `tm_6_load_images_2` → `tm_7_compress_images_2` → `tm_999_prepare_data`.
-- Скрейпер ходит на `http://localhost:8000` (API), на TM напрямую — только `tm_1` (страницы
-  сборных/сотрудников) и `tm_6` (фото).
-- Промежуточные файлы: `tm_teams.json`, `tm_players_urls.json`, `tm_players_profiles.json`,
-  `tm_players_market_values.json`, `tm_legends_profiles.json`, `tm_clubs.json`,
-  `tm_coach_profiles.json`, `tm_clubs_urls.json` + папки `*_faces/`, `flags/`, `logos/`.
-- Финальные `prepared_*` — вход для football_collection (см. её [[данные]]).
+- Общий HTTP-слой — `client.py` (`Client.request`: кэш → circuit gate → token bucket → ретраи;
+  бакеты `html` и `cdn` отдельно; curl_cffi с fallback на requests). Resume-кэш — `cache.py`.
+- Fetch-модули — `fetch/`; оркестратор — `crawl.py --scope pilot|tier1 [--spot N] [--images]`.
+- Скрейпер ходит на `http://127.0.0.1:8000` (API); напрямую на TM — только `/mitarbeiter/`
+  (`fetch/coaches.py`), ceapi-fallback (`fetch/market_values.py`) и CDN-картинки (`download_images.py`).
+- Выход — канон-JSON в `data/canon/` (`build_canon.py`, валидация `canon_schema.json`).
+- Старый конвейер `tm_*.py` заморожен (см. ветки `main`/`fix`).
 
 ### Известные баги main (чинить при переписывании)
 
@@ -48,12 +47,14 @@ rate-limit ≤2 rps, curl_cffi, SQLite-resume-кэш, идемпотентнос
 
 ```bash
 # нужен поднятый transfermarkt-api на :8000 (см. его AGENTS.md)
-python tm_1_teams_2.py
-python tm_2_players_profiles_2.py
-# ... по порядку до tm_999
+.venv\Scripts\python crawl.py --scope pilot            # пилот (PSG, Real, Франция)
+.venv\Scripts\python crawl.py --scope tier1            # полный Tier-1
+.venv\Scripts\python crawl.py --scope pilot --spot 10 --images
+.venv\Scripts\python probe.py --html | --cdn           # перезамер лимитов (осторожно!)
 ```
 
-Параметры — через env (`TM_*_WORKERS`, `TM_*_REQUEST_DELAY`, `TM_*_MAX_RETRIES`, см. файлы).
+Зависимости: `requests`, `beautifulsoup4`, `lxml`, `curl_cffi`, `jsonschema` (уже в `.venv`).
+Параметры — через env `TM_*` (лимиты, кэш, пути — см. `config.py`).
 
 ## Устройство вики
 
@@ -68,8 +69,9 @@ python tm_2_players_profiles_2.py
 ## Workflow
 
 - Код и комментарии — на английском; вики и этот файл — на русском.
-- **Лимит запросов к TM — не более 2/сек.** При бане (429/блокировка) — остановиться, не
-  молотить ретраями.
+- **Лимиты к TM: HTML 1.5 rps, CDN 10 rps** (установлены probe 2026-08-29, см. [[конвейер]]).
+  При бане (429/403/блок-страница) — остановиться, не молотить ретраями; circuit breaker сам
+  даст паузу, заблокированные URL кэшируются.
 - Три хука (.agent/hooks/ + плагин opencode в .opencode/plugins/) поддерживают контур вики.
 
 ## Working principles
