@@ -39,6 +39,17 @@ CONCURRENCY = int(os.getenv("TM_CONCURRENCY", "2"))  # max in-flight requests
 CIRCUIT_FAILS = int(os.getenv("TM_CIRCUIT_FAILS", "3"))
 CIRCUIT_PAUSE = float(os.getenv("TM_CIRCUIT_PAUSE", "120"))
 
+# --- Adaptive rate (AIMD on rps) ---------------------------------------------
+# If the session starts throttling, the client halves the bucket rate down to
+# the floor, then slowly grows back to the configured max. The learned rate is
+# persisted to RATES_PATH and reused on the next start (remembers constraints).
+HTML_RPS_MIN = float(os.getenv("TM_HTML_RPS_MIN", "1.0"))
+CDN_RPS_MIN = float(os.getenv("TM_CDN_RPS_MIN", "5.0"))
+RATE_GROW_AFTER = int(os.getenv("TM_RATE_GROW_AFTER", "50"))    # successes per +grow
+RATE_GROW_FACTOR = float(os.getenv("TM_RATE_GROW_FACTOR", "1.25"))
+RATE_DROP_FACTOR = float(os.getenv("TM_RATE_DROP_FACTOR", "0.5"))
+RATES_PATH = Path(os.getenv("TM_RATES_PATH", str(ROOT / "data" / "rates.json")))
+
 # --- Resume cache ------------------------------------------------------------
 CACHE_PATH = Path(os.getenv("TM_CACHE_PATH", str(ROOT / "tm_cache.sqlite3")))
 CACHE_TTL = int(os.getenv("TM_CACHE_TTL", str(7 * 24 * 3600)))

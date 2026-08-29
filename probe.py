@@ -115,7 +115,7 @@ def probe_html() -> None:
     summary = []
     for rps in HTML_LEVELS:
         client = Client(html_rps=rps, html_burst=1, max_retries=1,
-                        concurrency=1, circuit_fails=999)
+                        concurrency=1, circuit_fails=999, adaptive_rate=False)
         print(f"\n=== HTML @ {rps:.2f} rps x {TOTAL} ===")
         counts = _probe_level(client, ["clubs/583/players"], "html")
         summary.append((rps, counts))
@@ -138,7 +138,7 @@ def probe_html_direct() -> None:
     summary: list[tuple[float, dict]] = []
     for rps in DIRECT_LEVELS:
         client = Client(html_rps=rps, html_burst=1, max_retries=1,
-                        concurrency=1, circuit_fails=999)
+                        concurrency=1, circuit_fails=999, adaptive_rate=False)
         print(f"\n=== DIRECT @ {rps:.2f} rps x {TOTAL} ===")
         counts = _probe_level(client, [DIRECT_URL], "html")
         summary.append((rps, counts))
@@ -159,7 +159,7 @@ def probe_html_direct() -> None:
 
 def probe_cdn() -> None:
     print(f"CDN probe (levels {CDN_LEVELS} rps, {TOTAL}/level)")
-    client = Client(max_retries=1, concurrency=1, circuit_fails=999)
+    client = Client(max_retries=1, concurrency=1, circuit_fails=999, adaptive_rate=False)
     urls = _bootstrap_cdn_urls(client)
     if not urls:
         print("No CDN URLs to probe; aborting.")
@@ -167,7 +167,7 @@ def probe_cdn() -> None:
     summary = []
     for rps in CDN_LEVELS:
         c = Client(cdn_rps=rps, cdn_burst=1, max_retries=1, concurrency=1,
-                   circuit_fails=999)
+                   circuit_fails=999, adaptive_rate=False)
         print(f"\n=== CDN @ {rps:.2f} rps x {TOTAL} ===")
         counts = _probe_level(c, urls, "cdn")
         summary.append((rps, counts))

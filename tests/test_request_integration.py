@@ -10,6 +10,7 @@ def _client(tmp_path, **kw) -> Client:
     base = dict(
         html_rps=100, cdn_rps=100, max_retries=3,
         concurrency=4, circuit_fails=999,  # circuit disabled by default in tests
+        adaptive_rate=False, rates_path=None,  # no rate aimer / no persistence
         cache=ResumeCache(str(tmp_path / "c.sqlite3"), ttl=3600),
     )
     base.update(kw)
