@@ -142,6 +142,65 @@ def stats() -> dict:
     }
 
 
+INDEX_URL = "https://www.transfermarkt.com/wettbewerbe/national/"
+
+
+def _leagues_stats() -> dict:
+    """Per-league crawl progress from the resume cache (club lists + rosters)."""
+    import re
+    from bs4 import BeautifulSoup
+    try:
+        con = sqlite3.connect(f"file:{CACHE_PATH}?mode=ro", uri=True, timeout=5)
+        try:
+            idx = con.execute("SELECT payload FROM requests WHERE url=? AND status=200",
+                              (INDEX_URL,)).fetchone()
+            lists = con.execute(
+                "SELECT url, payload FROM requests WHERE url LIKE '%/competitions/%/clubs' AND status=200"
+            ).fetchall()
+            rosters = con.execute(
+                "SELECT url FROM requests WHERE url LIKE '%/clubs/%/players' AND status=200"
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return {"error": str(exc)}
+
+    roster_clubs = {m.group(1) for (url,) in rosters
+                    if (m := re.search(r"/clubs/(\d+)/players", url))}
+
+    leagues: dict[str, dict] = {}
+    if idx:
+        soup = BeautifulSoup(idx[0], "html.parser")
+        for a in soup.find_all("a", href=True):
+            h = a.get("href") or ""
+            if "/wettbewerb/" in h:
+                lid = h.split("/wettbewerb/")[-1].split("/")[0]
+                if lid not in leagues:
+                    leagues[lid] = {"id": lid,
+                                    "name": a.get("title") or a.get_text(strip=True),
+                                    "clubs": None, "rosters": 0, "status": "pending"}
+
+    for url, payload in lists:
+        m = re.search(r"/competitions/(\w+)/clubs", url)
+        if not m:
+            continue
+        lid = m.group(1)
+        try:
+            clubs = [c.get("id") for c in (json.loads(payload).get("clubs") or [])]
+        except (json.JSONDecodeError, TypeError):
+            continue
+        entry = leagues.setdefault(lid, {"id": lid, "name": lid,
+                                         "clubs": None, "rosters": 0, "status": "pending"})
+        entry["clubs"] = len(clubs)
+        entry["rosters"] = sum(1 for c in clubs if c in roster_clubs)
+        entry["status"] = "done" if entry["rosters"] >= entry["clubs"] else "in-progress"
+
+    done = sum(1 for v in leagues.values() if v["status"] == "done")
+    prog = sum(1 for v in leagues.values() if v["status"] == "in-progress")
+    return {"leagues": list(leagues.values()), "total": len(leagues),
+            "done": done, "in_progress": prog, "rostered_clubs": len(roster_clubs)}
+
+
 PAGE = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <title>TM scraper — сессия</title>
@@ -180,6 +239,8 @@ PAGE = """<!doctype html>
  <div><h2>По статусам</h2><table id="st"><tbody></tbody></table></div>
  <div><h2>Канон</h2><table id="canon"><tbody></tbody></table></div>
 </div>
+<h2>Лиги (крол составов) <span id="lgsum" class="warn" style="font-size:12px"></span></h2>
+<table id="leagues"><tbody></tbody></table>
 <h2>Лог (хвост)</h2><pre id="log">…</pre>
 </div>
 <script>
@@ -222,7 +283,25 @@ async function refresh(){
   } else { ca.innerHTML='<tr><td colspan="2">канон ещё не собран</td></tr>'; }
   document.getElementById('log').textContent=(s.log||[]).join('\\n');
 }
+async function refreshLeagues(){
+  let l;
+  try{ l=await (await fetch('/api/leagues')).json(); }catch(e){ return; }
+  document.getElementById('lgsum').textContent =
+    ' · сделано '+l.done+' · идёт '+l.in_progress+' · всего '+l.total+' · клубов с составами '+l.rostered_clubs;
+  const tb=document.getElementById('leagues').querySelector('tbody');
+  tb.innerHTML='';
+  for(const lg of (l.leagues||[])){
+    const tr=document.createElement('tr');
+    const bar = lg.clubs ? Math.round(100*lg.rosters/lg.clubs) : 0;
+    const status = lg.status==='done' ? '✅' : (lg.status==='in-progress' ? '⏳' : '•');
+    tr.innerHTML = '<td>'+status+'</td><td>'+lg.name+'</td><td>'+lg.id+'</td>' +
+      '<td class="num">'+(lg.clubs??'—')+'</td><td class="num">'+(lg.rosters??'—')+'</td>' +
+      '<td class="num">'+(lg.clubs?bar+'%':'—')+'</td>';
+    tb.appendChild(tr);
+  }
+}
 refresh(); setInterval(refresh, 3000);
+refreshLeagues(); setInterval(refreshLeagues, 5000);
 </script>
 </body></html>"""
 
@@ -231,6 +310,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         if self.path.startswith("/api/stats"):
             body = json.dumps(stats()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/api/leagues"):
+            body = json.dumps(_leagues_stats()).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
