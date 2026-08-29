@@ -46,10 +46,16 @@ def resolve_team_ids(scope: str) -> list[str]:
     from client import client as singleton
     data = singleton.api("national-teams/most-valuable")
     wanted = {name.strip().lower() for name in TIER_1_NATIONAL_TEAMS}
-    team_ids = [
-        r["id"] for r in (data.get("results") or [])
-        if (r.get("name") or "").strip().lower() in wanted
-    ]
+    # most-valuable returns the same team name several times (men senior, U-21,
+    # U-19, women, ...). Dedupe by name — the first occurrence is the senior
+    # men's team (highest market value), which is what Tier-1 wants.
+    team_ids: list[str] = []
+    seen: set[str] = set()
+    for r in (data.get("results") or []):
+        name = (r.get("name") or "").strip().lower()
+        if name in wanted and name not in seen:
+            seen.add(name)
+            team_ids.append(r["id"])
     logger.info("resolved %d national teams", len(team_ids))
     return team_ids
 

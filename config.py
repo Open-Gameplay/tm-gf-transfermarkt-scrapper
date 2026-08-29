@@ -92,7 +92,7 @@ TIER_1_COMPETITIONS: list[str] = [
 TIER_1_NATIONAL_TEAMS: list[str] = [
     "England", "France", "Spain", "Portugal", "Brazil",
     "Germany", "Netherlands", "Argentina", "Belgium", "Norway",
-    "Senegal", "Morocco", "Turkey", "Ivory Coast", "Ecuador",
+    "Senegal", "Morocco", "Türkiye", "Ivory Coast", "Ecuador",
     "Sweden", "Uruguay", "United States", "Switzerland", "Colombia",
 ]
 
