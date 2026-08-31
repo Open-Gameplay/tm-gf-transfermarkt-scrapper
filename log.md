@@ -101,6 +101,29 @@ bucket съедает N токенов. `/players/{id}/market_value` = weight 2 
 Это чинит и «стоп на коротких кластерах» (120-секундные паузы), и «молотьбу против сплошного бана».
 49 тестов проходят.
 
+## [2026-08-31] session | данные для GF: open-football + TM-ростеры; стратегия сменилась
+
+Смена стратегии: TM-страницы игроков блокируются per-IP (~15-20 запросов) — профили/стоимости
+больше не тянем. Источник атрибутов для GF — **open-football-database** (git-репо, TM-производный,
+сезон 2025/26, 59k игроков: CA/PA, позиции+уровни, value, ноги, контракт, история, TM-id).
+Изучены и другие источники: DF11 Faces (фото, через сервер open-football), FM-базы (совместимость),
+API-Football (альтернатива), FIFA/Kaggle.
+
+Сделано:
+- **API-форк**: curl_cffi (ротация иммитаций — починен «unsupported impersonation»); составы клубов
+  теперь возвращают **`imageUrl`** (фото из страницы состава, профиль не нужен; даже 403-страницы
+  игроков получают фото). 26/26 у PSG.
+- **Крол составов всех лиг TM** (`fetch_all_rosters.py`): индекс `/wettbewerbe/national/` = 269 лиг,
+  **3949 клубов, 107454 игрока** (рост, гражданство, стоимость, фото). Завершён.
+- `load_openfootball.py`: join open-football + TM-ростеры по `ids.transfermarkt.com` (gb/es: 6655
+  игроков, рост 25% — ограничено TM-id: es 74%, gb 15%).
+- Вьюер по лигам (`/api/leagues`), `--refresh` для добора фото, `download_faces_from_cache`.
+- Хэндофф для новой сессии: `docs/reports/2026-08-31-handoff-data-pipeline.md`.
+
+Открыто: профили клубов (цвета/лого) только 198/3949; TM-id нет у ~60% игроков open-football
+(нижние дивизионы Англии 0-38%) — фаззи-матч или дефолт роста; закрепить open-football-database
+сабмодулем. Подробности — [[конвейер]] и handoff.
+
 ## [2026-08-29] decision | перенесены тесты и AIMD из transfermarkt_scrapper_upgraded
 
 Разобран `C:\Users\Egor\Desktop\transfermarkt_scrapper_upgraded\upgraded` — это ветка `fix` +
