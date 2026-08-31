@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 
@@ -26,6 +27,21 @@ from client import Client
 logger = logging.getLogger("scraper.fetch_all_rosters")
 
 INDEX_URL = "https://www.transfermarkt.com/wettbewerbe/national/"
+
+
+def _cached_has_photos(client: Client, club_id: str) -> bool:
+    """True if the cached roster already carries player portraits."""
+    cache = client._cache
+    if not cache:
+        return False
+    hit = cache.get(f"{client.api_base}/clubs/{club_id}/players")
+    if not hit:
+        return False
+    try:
+        data = json.loads(hit[1])
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return any(p.get("imageUrl") for p in (data.get("players") or []))
 
 
 def parse_competition_index(client: Client) -> list[str]:
@@ -48,6 +64,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch all TM club rosters into the resume cache.")
     parser.add_argument("--limit", type=int, default=0,
                         help="only process the first N competitions (0 = all)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="re-fetch rosters whose cached payload lacks imageUrl (photo backfill)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -59,6 +77,7 @@ def main() -> None:
 
     club_total = 0
     roster_total = 0
+    refetched = 0
     for i, lid in enumerate(league_ids, 1):
         try:
             data = client.api(f"competitions/{lid}/clubs")
@@ -68,17 +87,24 @@ def main() -> None:
         club_ids = [c["id"] for c in (data.get("clubs") or [])]
         club_total += len(club_ids)
         for cid in club_ids:
+            if args.refresh and _cached_has_photos(client, cid):
+                continue
             try:
-                rd = client.api(f"clubs/{cid}/players")
+                kw = {"use_cache": False} if args.refresh else {}
+                rd = client.api(f"clubs/{cid}/players", **kw)
                 roster_total += len(rd.get("players") or [])
+                if args.refresh:
+                    refetched += 1
             except Exception as exc:
                 logger.warning("club %s roster failed: %s", cid, exc)
         if i % 20 == 0 or i == len(league_ids):
-            logger.info("competitions %d/%d | clubs=%d rosters=%d",
-                        i, len(league_ids), club_total, roster_total)
+            logger.info("competitions %d/%d | clubs=%d rosters=%d%s",
+                        i, len(league_ids), club_total, roster_total,
+                        f" refetched={refetched}" if args.refresh else "")
 
-    logger.info("done: %d competitions, %d clubs, %d roster players",
-                len(league_ids), club_total, roster_total)
+    logger.info("done: %d competitions, %d clubs, %d roster players%s",
+                len(league_ids), club_total, roster_total,
+                f" (refetched {refetched})" if args.refresh else "")
 
 
 if __name__ == "__main__":

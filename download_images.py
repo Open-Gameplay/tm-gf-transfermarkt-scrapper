@@ -95,6 +95,42 @@ def download_canon_images(
     return stats
 
 
+def download_faces_from_cache(client: Client | None = None) -> int:
+    """Download every player face from the club-roster cache (imageUrl added by
+    the API's /clubs/{id}/players). CDN bucket — no profile pages involved."""
+    import json
+    import sqlite3
+
+    from config import CACHE_PATH
+    client = client or _default_client()
+    n = 0
+    try:
+        con = sqlite3.connect(f"file:{CACHE_PATH}?mode=ro", uri=True, timeout=10)
+        rows = con.execute(
+            "SELECT payload FROM requests "
+            "WHERE url LIKE '%/clubs/%/players' AND status=200"
+        ).fetchall()
+        con.close()
+    except sqlite3.Error as exc:
+        logger.error("cannot read resume cache: %s", exc)
+        return 0
+
+    for (payload,) in rows:
+        try:
+            players = json.loads(payload).get("players") or []
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for p in players:
+            url = p.get("imageUrl")
+            pid = p.get("id")
+            if not url or not pid or _is_default_image(url):
+                continue
+            dest = IMAGES_DIR / "faces" / f"{pid}.jpg"
+            n += _download(client, url, dest)
+    logger.info("faces downloaded from rosters: %d", n)
+    return n
+
+
 def _default_client() -> Client:
     from client import client as singleton
     return singleton
