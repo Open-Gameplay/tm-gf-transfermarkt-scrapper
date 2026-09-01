@@ -16,5 +16,8 @@
 
 ## Первоисточники (не редактировать)
 
-- Датированные отчёты — `docs/reports/` (если появятся).
+- Датированные отчёты — `docs/reports/`:
+  - `2026-08-29-handoff-scraper-v2.md` — начальный handoff scraper-v2
+  - `2026-08-31-handoff-data-pipeline.md` — конвейер данных GF
+  - `2026-08-31-handoff-crawl.md` — **актуальный**: запуск краула (1-3)
 - Канон-JSON и маппинг в игры — вики GameplayFootball: `данные-из-transfermarkt`.

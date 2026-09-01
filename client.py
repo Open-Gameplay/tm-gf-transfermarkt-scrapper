@@ -566,11 +566,47 @@ class Client:
 
     # --- conveniences ---------------------------------------------------------
     def api(self, path: str, **kwargs) -> Any:
-        """GET a local API endpoint and return parsed JSON."""
+        """GET a local API endpoint and return parsed JSON.
+
+        Local API 500s are permanent data gaps (not TM blocks), so this method
+        bypasses the circuit breaker: a single attempt, no throttle on failure.
+        Only retries on connection/timeout errors (network blips).
+        """
         url = f"{self.api_base}/{path.lstrip('/')}"
-        resp = self.request("GET", url, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
+        use_cache = kwargs.pop("use_cache", True)
+
+        # Check resume cache first
+        if use_cache and self._cache:
+            hit = self._cache.get(url)
+            if hit and 200 <= hit[0] < 300:
+                return json.loads(_Response(hit[0], hit[1], url).text)
+
+        # Single attempt — no circuit breaker, no retries
+        self._buckets["html"].acquire()
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("User-Agent", self._ua())
+        try:
+            resp = self._session().request(
+                "GET", url, timeout=self.timeout, headers=headers, **kwargs
+            )
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                Exception) as exc:
+            logger.warning("api() %s failed: %s", url, exc)
+            raise
+
+        status = resp.status_code
+        if use_cache and self._cache and 200 <= status < 300:
+            try:
+                self._cache.put(url, status, resp.content)
+            except Exception:
+                pass
+
+        if status >= 400:
+            import requests as _req
+            raise _req.HTTPError(f"{status} for {url}")
+
+        return json.loads(resp.text)
 
     def get_html(self, url: str, **kwargs) -> _Response:
         """GET a direct Transfermarkt HTML page (mitarbeiter, etc.)."""

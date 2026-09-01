@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 # --- Local transfermarkt-api -------------------------------------------------
-API_BASE = os.getenv("TM_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+API_BASE = os.getenv("TM_API_BASE", "http://127.0.0.1:8001").rstrip("/")
 
 # --- Rate limits -------------------------------------------------------------
 # HTML endpoints go through the local API: one API call == one live TM request.

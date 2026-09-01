@@ -101,6 +101,36 @@ bucket съедает N токенов. `/players/{id}/market_value` = weight 2 
 Это чинит и «стоп на коротких кластерах» (120-секундные паузы), и «молотьбу против сплошного бана».
 49 тестов проходят.
 
+## [2026-08-31] milestone | tmapi: player profile/market_value/stats починены через внутренний JSON API Transfermarkt
+
+Найден внутренний JSON API Transfermarkt: `tmapi.transfermarkt.technology` — используется их Svelte
+web-компонентами, reverse-engineered из JS-бандлов (`player-performance-proxy/bundle.js` и др.).
+Не блокируется тем же механизмом что HTML-страницы игроков.
+
+**Ключевые эндпоинты:**
+- `tmapi/player/{id}` — profile: height, foot, position+side positions, outfitter, imageUrl, contractUntil
+- `tmapi/player/{id}/market-value-history` — история стоимости (37 точек)
+- `tmapi/player/{id}/absence` — травмы
+- `tmapi/player/{id}/gallery` — фото галерея
+- `ceapi/performance-game/{id}` — статистика по матчам (goals, assists, cards, minutes)
+
+**Изменения в transfermarkt-api:**
+- `app/services/players/profile.py` — переписан: HTML-скрейпинг → tmapi JSON
+- `app/services/players/market_value.py` — переписан: HTML+ceapi → tmapi JSON
+- `app/services/players/stats.py` — переписан: HTML-скрейпинг (сломан) → ceapi JSON
+- `app/schemas/base.py` — `parse_str_to_int/height` исправлены: принимают int/float/str
+
+**Результат:** все 13 эндпоинтов работают без бана, включая profile/stats/market_value/injuries/
+achievements/transfers. Все атрибуты игроков (height, foot, position, outfitter, imageUrl, marketValue)
+доступны напрямую с TM для 107k игроков без блокировок.
+
+open-football-database отложена в долгий ящик — TM доступен напрямую через tmapi, ofdb может
+перестать поддерживаться.
+
+Открыто: fetch_all_club_profiles.py (198/3949), fetch_all_national_teams.py (19/?),
+fetch_player_extras.py (тестировано на 5 игроках), download_images.py (extensions),
+build_gf_database.py (конвертер канон → GF SQLite). Подробности — [[конвейер]].
+
 ## [2026-08-31] session | данные для GF: open-football + TM-ростеры; стратегия сменилась
 
 Смена стратегии: TM-страницы игроков блокируются per-IP (~15-20 запросов) — профили/стоимости

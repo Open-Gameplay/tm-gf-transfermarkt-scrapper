@@ -90,8 +90,14 @@ def main() -> None:
             if args.refresh and _cached_has_photos(client, cid):
                 continue
             try:
-                kw = {"use_cache": False} if args.refresh else {}
-                rd = client.api(f"clubs/{cid}/players", **kw)
+                if args.refresh:
+                    # Fetch fresh data (bypass cache) then manually cache it
+                    rd = client.api(f"clubs/{cid}/players", use_cache=False)
+                    url = f"{client.api_base}/clubs/{cid}/players"
+                    import json as _json
+                    client._cache.put(url, 200, _json.dumps(rd).encode("utf-8"))
+                else:
+                    rd = client.api(f"clubs/{cid}/players")
                 roster_total += len(rd.get("players") or [])
                 if args.refresh:
                     refetched += 1
