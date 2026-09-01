@@ -1,6 +1,6 @@
 """Session viewer: web dashboard for crawl progress.
 
-Shows crawl progress: countries, leagues, clubs, players, national teams, images.
+Shows: countries, leagues, clubs, players, national teams, images.
 
 Usage:
     python session_viewer.py [--port 8080] [--log <path>]
@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from config import CACHE_PATH, CANON_DIR, CDN_RPS, HTML_RPS, IMAGES_DIR, RATES_PATH
+from config import CACHE_PATH, CDN_RPS, HTML_RPS, IMAGES_DIR, RATES_PATH
 
 PORT = int(os.getenv("TM_VIEWER_PORT", "8080"))
 LOG_PATH = Path(os.getenv("TM_VIEWER_LOG", str(Path(__file__).resolve().parent / "logs" / "crawl.log")))
@@ -38,9 +38,8 @@ def _db_query(sql: str, params=()) -> list:
         return []
 
 
-def _pilot_progress() -> dict:
-    """Compute progress from cache (all leagues, not just pilot)."""
-    # Get all cached data
+def _progress() -> dict:
+    """Compute progress from cache."""
     comp_lists = _db_query(
         "SELECT url, payload FROM requests WHERE url LIKE '%/competitions/%/clubs' AND status=200"
     )
@@ -58,7 +57,7 @@ def _pilot_progress() -> dict:
     )
 
     # Index club data
-    roster_clubs = {}  # cid -> {player_count, with_photo}
+    roster_clubs = {}
     for (url, payload) in club_rosters:
         m = re.search(r"/clubs/(\d+)/players", url)
         if not m:
@@ -71,7 +70,7 @@ def _pilot_progress() -> dict:
         except:
             pass
 
-    profile_clubs = {}  # cid -> {name, league_id, country_id, colors, logo}
+    profile_clubs = {}
     for (url, payload) in club_profiles:
         m = re.search(r"/clubs/(\d+)/profile", url)
         if not m:
@@ -92,8 +91,7 @@ def _pilot_progress() -> dict:
         except:
             pass
 
-    # Index competition club lists
-    comp_clubs = {}  # lid -> [cid]
+    comp_clubs = {}
     for (url, payload) in comp_lists:
         m = re.search(r"/competitions/(\w+)/clubs", url)
         if not m:
@@ -105,8 +103,7 @@ def _pilot_progress() -> dict:
         except:
             pass
 
-    # Index national team data
-    nt_data = {}  # tid -> {name, player_count, with_photo}
+    nt_data = {}
     for (url, payload) in nt_profiles:
         m = re.search(r"/national-teams/(\d+)/profile", url)
         if not m:
@@ -114,7 +111,12 @@ def _pilot_progress() -> dict:
         tid = m.group(1)
         try:
             data = json.loads(payload)
-            nt_data[tid] = {"name": data.get("name"), "players": 0, "photos": 0}
+            nt_data[tid] = {
+                "name": data.get("name"),
+                "players": 0,
+                "photos": 0,
+                "emblem": data.get("image"),
+            }
         except:
             pass
 
@@ -126,13 +128,13 @@ def _pilot_progress() -> dict:
         try:
             players = json.loads(payload).get("players") or []
             if tid not in nt_data:
-                nt_data[tid] = {"name": "?", "players": 0, "photos": 0}
+                nt_data[tid] = {"name": "?", "players": 0, "photos": 0, "emblem": None}
             nt_data[tid]["players"] = len(players)
         except:
             pass
 
-    # Build country -> league hierarchy dynamically from club profiles
-    countries = {}  # country_id -> {name, leagues: {lid -> stats}}
+    # Build country -> league hierarchy
+    countries = {}
     for cid, pinfo in profile_clubs.items():
         country_id = pinfo.get("country_id", "")
         league_id = pinfo.get("league_id", "")
@@ -141,6 +143,7 @@ def _pilot_progress() -> dict:
         if country_id not in countries:
             countries[country_id] = {
                 "name": pinfo.get("country_name", ""),
+                "flag": f"https://img.a.transfermarkt.technology/flagge/tiny/{country_id}.png",
                 "leagues": {},
                 "total_clubs": 0, "clubs_with_profile": 0, "clubs_with_roster": 0,
                 "total_players": 0, "players_with_photo": 0,
@@ -148,13 +151,12 @@ def _pilot_progress() -> dict:
         if league_id not in countries[country_id]["leagues"]:
             countries[country_id]["leagues"][league_id] = {
                 "id": league_id, "name": pinfo.get("league_name", league_id),
+                "logo": f"https://img.a.transfermarkt.technology/logo/header/{league_id.lower()}.png",
                 "clubs_total": 0, "clubs_profile": 0, "clubs_roster": 0,
                 "players": 0, "photos": 0,
             }
 
-    # Count clubs per league from comp_clubs
     for lid, cids in comp_clubs.items():
-        # Find which country this league belongs to
         country_id = None
         league_name = lid
         for pinfo in profile_clubs.values():
@@ -163,7 +165,6 @@ def _pilot_progress() -> dict:
                 league_name = pinfo.get("league_name", lid)
                 break
         if not country_id:
-            # Fallback: use first club's country
             for cid in cids:
                 if cid in profile_clubs:
                     country_id = profile_clubs[cid].get("country_id", "")
@@ -173,19 +174,18 @@ def _pilot_progress() -> dict:
             country_id = "unknown"
         if country_id not in countries:
             countries[country_id] = {
-                "name": "", "leagues": {},
+                "name": "", "flag": "", "leagues": {},
                 "total_clubs": 0, "clubs_with_profile": 0, "clubs_with_roster": 0,
                 "total_players": 0, "players_with_photo": 0,
             }
         if lid not in countries[country_id]["leagues"]:
             countries[country_id]["leagues"][lid] = {
-                "id": lid, "name": league_name,
+                "id": lid, "name": league_name, "logo": "",
                 "clubs_total": 0, "clubs_profile": 0, "clubs_roster": 0,
                 "players": 0, "photos": 0,
             }
         countries[country_id]["leagues"][lid]["clubs_total"] = len(cids)
 
-    # Fill in profile/roster counts
     for country_id, cinfo in countries.items():
         for lid, lstats in cinfo["leagues"].items():
             league_cids = comp_clubs.get(lid, [])
@@ -206,8 +206,11 @@ def _pilot_progress() -> dict:
     nt_list = []
     for tid in sorted(nt_data.keys(), key=lambda x: nt_data[x].get("name", "")):
         info = nt_data[tid]
-        nt_list.append({"id": tid, "name": info["name"],
-                        "players": info["players"], "photos": info["photos"]})
+        nt_list.append({
+            "id": tid, "name": info["name"],
+            "players": info["players"], "photos": info["photos"],
+            "emblem": info.get("emblem"),
+        })
 
     # Image stats
     images = {"faces": 0, "logos": 0, "leagues": 0, "emblems": 0, "flags": 0}
@@ -269,7 +272,7 @@ def stats() -> dict:
     return {
         "active": active,
         "log_age_s": round(time.time() - mtime, 1) if mtime else None,
-        "crawl": _pilot_progress(),
+        "crawl": _progress(),
         "rates": _rates(),
         "log": log.get("lines", []),
     }
@@ -280,11 +283,12 @@ PAGE = """<!doctype html>
 <title>TM scraper — crawl</title>
 <style>
  body{font:14px/1.5 system-ui,Segoe UI,sans-serif;background:#111;color:#ddd;margin:0}
- .wrap{max-width:1100px;margin:0 auto;padding:16px}
+ .wrap{max-width:1200px;margin:0 auto;padding:16px}
  h1{font-size:18px;margin:0 0 8px}
  h2{font-size:14px;margin:16px 0 6px;color:#aaa;text-transform:uppercase;letter-spacing:.5px}
+ h3{font-size:13px;margin:12px 0 4px;color:#ccc}
  table{border-collapse:collapse;width:100%}
- td,th{border:1px solid #2a2a2a;padding:4px 8px;text-align:left;font-size:13px}
+ td,th{border:1px solid #2a2a2a;padding:4px 8px;text-align:left;font-size:12px}
  th{color:#888;font-weight:600}
  .num{text-align:right;font-variant-numeric:tabular-nums}
  .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:12px;font-weight:600}
@@ -296,6 +300,10 @@ PAGE = """<!doctype html>
  pre{font:12px/1.4 Consolas,monospace;background:#0c0c0c;border:1px solid #2a2a2a;
      padding:8px;overflow:auto;max-height:320px;white-space:pre-wrap}
  .done{color:#5f5} .wip{color:#fa0} .miss{color:#f55}
+ img{vertical-align:middle;margin-right:4px}
+ .flag{width:20px;height:14px}
+ .emblem{width:24px;height:24px}
+ .logo{width:20px;height:20px}
 </style></head><body><div class="wrap">
 <h1>TM scraper — crawl</h1>
 <div id="status" class="kpi"><span>статус</span><b id="statusb">…</b></div>
@@ -309,7 +317,7 @@ PAGE = """<!doctype html>
 <div id="countries"></div>
 
 <h2>Сборные</h2>
-<table id="nt"><thead><tr><th>Команда</th><th>ID</th><th class="num">Игроков</th></tr></thead>
+<table id="nt"><thead><tr><th></th><th>Команда</th><th>ID</th><th class="num">Игроков</th></tr></thead>
 <tbody></tbody></table>
 
 <h2>Изображения</h2>
@@ -340,13 +348,17 @@ async function refresh(){
 
   // Countries
   let ch='';
-  for(const [cid,c] of Object.entries(p.countries)){
-    ch+='<h3>'+c.name+'</h3><table><tr><th>Лига</th><th class="num">Клубов</th><th class="num">Профили</th><th class="num">Составы</th><th class="num">Игроков</th><th class="num">Фото</th></tr>';
+  const sorted=Object.entries(p.countries).sort((a,b)=>b[1].total_clubs-a[1].total_clubs);
+  for(const [cid,c] of sorted){
+    const flagImg=c.flag?'<img class="flag" src="'+c.flag+'" onerror="this.style.display=\'none\'">':'';
+    ch+='<h3>'+flagImg+c.name+' ('+c.total_clubs+' клубов)</h3>';
+    ch+='<table><tr><th>Лига</th><th></th><th class="num">Клубов</th><th class="num">Профили</th><th class="num">Составы</th><th class="num">Игроков</th><th class="num">Фото</th></tr>';
     for(const [lid,l] of Object.entries(c.leagues)){
       const cls=l.clubs_roster>=l.clubs_total?'done':(l.clubs_roster>0?'wip':'miss');
-      ch+='<tr><td>'+l.name+' ('+lid+')</td><td class="num">'+l.clubs_total+'</td><td class="num '+cls+'">'+l.clubs_profile+'</td><td class="num '+cls+'">'+l.clubs_roster+'</td><td class="num">'+l.players+'</td><td class="num">'+l.photos+'</td></tr>';
+      const logoImg=l.logo?'<img class="logo" src="'+l.logo+'" onerror="this.style.display=\'none\'">':'';
+      ch+='<tr><td>'+l.name+'</td><td>'+logoImg+'</td><td class="num">'+l.clubs_total+'</td><td class="num '+cls+'">'+l.clubs_profile+'</td><td class="num '+cls+'">'+l.clubs_roster+'</td><td class="num">'+l.players+'</td><td class="num">'+l.photos+'</td></tr>';
     }
-    ch+='<tr style="font-weight:600"><td>Итого</td><td class="num">'+c.total_clubs+'</td><td class="num">'+c.clubs_with_profile+'</td><td class="num">'+c.clubs_with_roster+'</td><td class="num">'+c.total_players+'</td><td class="num">'+c.players_with_photo+'</td></tr></table>';
+    ch+='<tr style="font-weight:600"><td>Итого</td><td></td><td class="num">'+c.total_clubs+'</td><td class="num">'+c.clubs_with_profile+'</td><td class="num">'+c.clubs_with_roster+'</td><td class="num">'+c.total_players+'</td><td class="num">'+c.players_with_photo+'</td></tr></table>';
   }
   document.getElementById('countries').innerHTML=ch;
 
@@ -355,7 +367,8 @@ async function refresh(){
   ntb.innerHTML='';
   for(const nt of p.national_teams){
     const tr=document.createElement('tr');
-    tr.innerHTML='<td>'+nt.name+'</td><td>'+nt.id+'</td><td class="num">'+nt.players+'</td>';
+    const emblemImg=nt.emblem?'<img class="emblem" src="'+nt.emblem+'" onerror="this.style.display=\'none\'">':'';
+    tr.innerHTML='<td>'+emblemImg+'</td><td>'+nt.name+'</td><td>'+nt.id+'</td><td class="num">'+nt.players+'</td>';
     ntb.appendChild(tr);
   }
 
