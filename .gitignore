@@ -5,3 +5,4 @@ tm_cache.sqlite3
 tm_cache.sqlite3-wal
 tm_cache.sqlite3-shm
 data/
+logs/
