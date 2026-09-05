@@ -41,8 +41,12 @@ def _download(client: Client, url: str, dest: Path) -> bool:
     if dest.exists() and dest.stat().st_size > 0:
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
-    resp = client.get_binary(url, timeout=60)
-    resp.raise_for_status()
+    try:
+        resp = client.get_binary(url, timeout=60)
+        resp.raise_for_status()
+    except Exception:
+        logger.debug("skipped %s (unavailable)", url)
+        return False
     dest.write_bytes(resp.content)
     logger.debug("downloaded %s -> %s", url, dest)
     return True
@@ -124,8 +128,13 @@ def _download_with_fallback(client: Client, url: str, dest: Path) -> bool:
 
 
 def download_faces_from_cache(client: Client | None = None) -> int:
-    """Download every player face from the club-roster cache (imageUrl added by
-    the API's /clubs/{id}/players). CDN bucket — no profile pages involved."""
+    """Download every player face from the cached rosters (clubs + national teams).
+
+    imageUrl is present on /clubs/{id}/players and /national-teams/{id}/players
+    responses (the NT endpoint got imageUrl extraction in the API fork). Faces are
+    stored by player id in the same faces/ dir — a player's portrait is the same
+    in club and national team.
+    """
     import json
     import sqlite3
 
@@ -136,7 +145,8 @@ def download_faces_from_cache(client: Client | None = None) -> int:
         con = sqlite3.connect(f"file:{CACHE_PATH}?mode=ro", uri=True, timeout=10)
         rows = con.execute(
             "SELECT payload FROM requests "
-            "WHERE url LIKE '%/clubs/%/players' AND status=200"
+            "WHERE (url LIKE '%/clubs/%/players' OR url LIKE '%/national-teams/%/players') "
+            "AND status=200"
         ).fetchall()
         con.close()
     except sqlite3.Error as exc:
