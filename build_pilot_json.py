@@ -172,11 +172,11 @@ def main() -> None:
                 "age": p.get("age"),
                 "club": p.get("club"),
                 "market_value": p.get("marketValue"),
-                "height": club_data.get("height"),
-                "foot": club_data.get("foot"),
-                "date_of_birth": club_data.get("dateOfBirth"),
+                "height": p.get("height") or club_data.get("height"),
+                "foot": p.get("foot") or club_data.get("foot"),
+                "date_of_birth": p.get("dateOfBirth") or club_data.get("dateOfBirth"),
                 "nationality": club_data.get("nationality"),
-                "image_url": club_data.get("imageUrl"),
+                "image_url": p.get("imageUrl") or club_data.get("imageUrl"),
             })
         national_teams.append({
             "id": tid,
