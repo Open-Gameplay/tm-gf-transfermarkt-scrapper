@@ -5,16 +5,29 @@ This file provides guidance to agents working with code in this repository.
 ## Что это
 
 Python-конвейер, который тянет данные Transfermarkt через локальный
-[transfermarkt-api](https://github.com/Churikov0112/transfermarkt-api) (FastAPI на :8000), скачивает
+[transfermarkt-api](https://github.com/Churikov0112/transfermarkt-api) (FastAPI на :8001), скачивает
 фото, чистит и собирает `prepared_*.json` для Flutter-игры football_collection и канон для
 GameplayFootball. Единый канон и конвейер — [[данные-из-transfermarkt]] вики GameplayFootball.
 
 **Актуальная картина проекта живёт в вики: `docs/wiki/index.md` — начинать оттуда.**
 
+## Место в пайплайне данных
+
+Сводный договор конвейера TM → GameplayFootball — вики GameplayFootball,
+`../GameplayFootball/docs/wiki/пайплайн-данных.md`. Роль: первый производитель данных после
+transfermarkt-api.
+
+- **Прод-выход (с 2026-09)**: вложенные `data/full/clubs.json` + `national_teams.json` и
+  `data/images/*` — их читают ratings/kit/faces-генераторы и конвертер `tm-gf-import`.
+- **Плоский канон** (`build_canon.py` → `data/canon/`) реализован и валидируется, но в проде
+  **не используется**; переход на него — программа data v2 (см. контракт).
+- Не называть конвертер `build_gf_database.py` — такого файла нет, его роль исполняет
+  `tm-gf-import`.
+
 ## Состояние проекта
 
 **Ветка `scraper-v2` — актуальная.** Переписанный скрейпер по дизайну [[конвейер]]: `config.py`,
-`client.py` (curl_cffi, глобальный token-bucket HTML 8 rps / CDN 15 rps, weight-aware для
+`client.py` (curl_cffi, глобальный token-bucket HTML 2 rps / CDN 15 rps, weight-aware для
 market_value, circuit breaker,
 ретраи с Retry-After), `cache.py` (SQLite resume-кэш всех статусов), `fetch/` (competitions →
 clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `canon_schema.json`,
@@ -29,9 +42,10 @@ clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `c
 - Общий HTTP-слой — `client.py` (`Client.request`: кэш → circuit gate → token bucket → ретраи;
   бакеты `html` и `cdn` отдельно; curl_cffi с fallback на requests). Resume-кэш — `cache.py`.
 - Fetch-модули — `fetch/`; оркестратор — `crawl.py --scope pilot|tier1 [--spot N] [--images]`.
-- Скрейпер ходит на `http://127.0.0.1:8000` (API); напрямую на TM — только `/mitarbeiter/`
+- Скрейпер ходит на `http://127.0.0.1:8001` (API); напрямую на TM — только `/mitarbeiter/`
   (`fetch/coaches.py`), ceapi-fallback (`fetch/market_values.py`) и CDN-картинки (`download_images.py`).
-- Выход — канон-JSON в `data/canon/` (`build_canon.py`, валидация `canon_schema.json`).
+- Выход (целевой) — канон-JSON в `data/canon/` (`build_canon.py`, валидация `canon_schema.json`);
+  прод-выход сейчас — `data/full/*.json` (см. [[данные]]).
 - Старый конвейер `tm_*.py` заморожен (см. ветки `main`/`fix`).
 
 ### Известные баги main (чинить при переписывании)
@@ -47,7 +61,7 @@ clubs → rosters → profiles/market_values → coaches), `build_canon.py` + `c
 ## Сборка / запуск
 
 ```bash
-# нужен поднятый transfermarkt-api на :8000 (см. его AGENTS.md)
+# нужен поднятый transfermarkt-api на :8001 (см. его AGENTS.md)
 .venv\Scripts\python crawl.py --scope pilot            # пилот (PSG, Real, Франция)
 .venv\Scripts\python crawl.py --scope tier1            # полный Tier-1
 .venv\Scripts\python crawl.py --scope pilot --spot 10 --images
