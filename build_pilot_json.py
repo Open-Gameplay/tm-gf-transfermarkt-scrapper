@@ -164,6 +164,8 @@ def main() -> None:
         for p in roster:
             pid = p.get("id")
             club_data = player_index.get(pid, {})
+            # `position` is the precise position from the NT roster page (same
+            # semantics as club player records); `main_position` not needed.
             enriched.append({
                 "id": pid,
                 "name": p.get("name"),
