@@ -122,7 +122,7 @@ def main() -> None:
 
             if country_id in country_leagues and actual_lid in country_leagues[country_id]["leagues"]:
                 roster = club_rosters.get(cid, [])
-                country_leagues[country_id]["leagues"][actual_lid]["clubs"].append({
+                entry = {
                     "id": cid,
                     "name": club_info.get("name"),
                     "official_name": profile.get("officialName"),
@@ -133,7 +133,18 @@ def main() -> None:
                     "founded": profile.get("foundedOn"),
                     "squad": profile.get("squad"),
                     "players": roster,
-                })
+                }
+                # A competition page lists a club in several sections (e.g. the
+                # Apertura and Clausura phases of the same league) -> the same TM
+                # id appears multiple times. Keep one row per club id: overwrite
+                # the existing entry instead of appending a duplicate.
+                clubs_in_league = country_leagues[country_id]["leagues"][actual_lid]["clubs"]
+                for i, existing in enumerate(clubs_in_league):
+                    if existing["id"] == cid:
+                        clubs_in_league[i] = entry
+                        break
+                else:
+                    clubs_in_league.append(entry)
 
     # Build countries list
     countries = []
